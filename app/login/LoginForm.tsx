@@ -1,5 +1,6 @@
 "use client";
 
+import { queueIntro } from "@/components/Intro";
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -32,6 +33,7 @@ export default function LoginForm() {
         return;
       }
       const next = params.get("next");
+      queueIntro();
       router.replace(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
       router.refresh();
     } else {

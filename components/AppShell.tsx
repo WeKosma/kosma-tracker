@@ -6,7 +6,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types";
 import { profileName } from "@/lib/format";
-import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers, KosmaMark } from "./icons";
+import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers } from "./icons";
+import KosmaLogo from "./KosmaLogo";
+import Intro from "./Intro";
 import { Avatar } from "./ui";
 import SignOutButton from "./SignOutButton";
 import CommandPalette from "./CommandPalette";
@@ -121,14 +123,12 @@ export default function AppShell({
 
   return (
     <Ctx.Provider value={value}>
+      <Intro name={(me.full_name ?? me.email).split(/[ @]/)[0]} />
       <div className="shell">
         <aside className={`sidebar ${menu ? "open" : ""}`}>
           <Link href="/" className="brandrow">
-            <KosmaMark />
-            <div>
-              <div className="wm">KOSMA</div>
-              <div className="brandtag">TRACKER</div>
-            </div>
+            <KosmaLogo className="brandlogo" />
+            <div className="brandtag">TRACKER</div>
           </Link>
 
           <button className="searchbtn" onClick={() => setPalette(true)}>

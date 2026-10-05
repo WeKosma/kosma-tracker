@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { KosmaMark } from "@/components/icons";
+import KosmaLogo from "@/components/KosmaLogo";
 
 export default function RecoverPage() {
   const router = useRouter();
@@ -27,7 +27,7 @@ export default function RecoverPage() {
   return (
     <div className="auth-form" style={{ minHeight: "100vh" }}>
       <form onSubmit={submit}>
-        <KosmaMark style={{ width: 30, marginBottom: 18 }} />
+        <KosmaLogo style={{ width: 120, height: "auto", marginBottom: 18, display: "block" }} />
         <div className="kicker">Nueva clave</div>
         <h2>Crea tu clave</h2>
         {error && <div className="msg error">{error}</div>}

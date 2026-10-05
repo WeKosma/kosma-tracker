@@ -534,3 +534,76 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
   .cal-legend { display: none; }
   .cal-title { font-size: 22px; }
 }
+
+/* ───────── Logo oficial ───────── */
+.brandrow { flex-direction: column; align-items: flex-start; gap: 8px; }
+.brandrow .brandlogo { width: 112px; height: auto; color: var(--fg); }
+.brandrow .brandtag { margin-top: 0; padding-left: 1px; }
+
+/* ───────── Intro después del login ───────── */
+.intro {
+  position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center;
+  background: #050505; color: #f3f3ef; cursor: pointer;
+}
+.intro.out { animation: intro-out 0.8s cubic-bezier(0.76, 0, 0.24, 1) forwards; }
+.intro.out .intro-center { animation: intro-lift 0.8s cubic-bezier(0.76, 0, 0.24, 1) forwards; }
+@keyframes intro-out { to { clip-path: inset(0 0 100% 0); } }
+@keyframes intro-lift { to { transform: translateY(-48px); opacity: 0; } }
+
+.intro-grid {
+  position: absolute; inset: 0; opacity: 0;
+  background-image: linear-gradient(rgba(243, 243, 239, 0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(243, 243, 239, 0.06) 1px, transparent 1px);
+  background-size: 72px 72px; background-position: center;
+  mask-image: radial-gradient(circle at center, #000 0%, transparent 62%);
+  -webkit-mask-image: radial-gradient(circle at center, #000 0%, transparent 62%);
+  animation: intro-fade 1.4s ease 0.1s forwards;
+}
+.intro-center { position: relative; display: flex; flex-direction: column; align-items: center; gap: 34px; }
+.intro-logo { width: min(460px, 74vw); height: auto; overflow: visible; }
+.intro-logo path { transform-box: fill-box; }
+
+/* 1 · el marco se cierra desde afuera */
+.intro-logo .c { opacity: 0; animation: intro-corner 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.intro-logo .tl { --dx: -70px; --dy: -70px; }
+.intro-logo .tr { --dx: 70px; --dy: -70px; animation-delay: 0.05s; }
+.intro-logo .bl { --dx: -70px; --dy: 70px; animation-delay: 0.1s; }
+.intro-logo .br { --dx: 70px; --dy: 70px; animation-delay: 0.15s; }
+@keyframes intro-corner { from { opacity: 0; transform: translate(var(--dx), var(--dy)); } to { opacity: 1; transform: none; } }
+
+/* 2 · las señales crecen desde el centro */
+.intro-logo .b { transform-origin: center; transform: scaleY(0); animation: intro-bar 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.intro-logo .b1 { animation-delay: 0.45s; }
+.intro-logo .b2 { animation-delay: 0.55s; }
+.intro-logo .b3 { animation-delay: 0.65s; }
+.intro-logo .k1 { animation-delay: 0.8s; }
+@keyframes intro-bar { to { transform: scaleY(1); } }
+
+/* 3 · la K entra y la palabra aparece letra por letra */
+.intro-logo .k { opacity: 0; animation: intro-k 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.9s forwards; }
+@keyframes intro-k { from { opacity: 0; transform: translateX(46px); } to { opacity: 1; transform: none; } }
+.intro-logo .l { opacity: 0; animation: intro-letter 0.75s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.intro-logo .l1 { animation-delay: 1.05s; }
+.intro-logo .l2 { animation-delay: 1.12s; }
+.intro-logo .l3 { animation-delay: 1.19s; }
+.intro-logo .l4 { animation-delay: 1.26s; }
+@keyframes intro-letter { from { opacity: 0; transform: translateY(36px); } to { opacity: 1; transform: none; } }
+
+/* 4 · línea de carga y saludo */
+.intro-meta {
+  display: flex; align-items: center; gap: 14px; opacity: 0;
+  font: 500 10px/1 var(--mono); letter-spacing: 0.22em; text-transform: uppercase; color: #9b9b96;
+  animation: intro-fade 0.8s ease 1.2s forwards;
+}
+.intro-line { position: relative; width: 120px; height: 1px; background: rgba(243, 243, 239, 0.16); overflow: hidden; }
+.intro-line i { position: absolute; inset: 0; background: #f3f3ef; transform: scaleX(0); transform-origin: left; animation: intro-load 1.3s cubic-bezier(0.65, 0, 0.35, 1) 1.15s forwards; }
+@keyframes intro-load { to { transform: scaleX(1); } }
+@keyframes intro-fade { to { opacity: 1; } }
+
+@media (max-width: 560px) {
+  .intro-meta { gap: 10px; letter-spacing: 0.16em; }
+  .intro-line { width: 64px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .intro *, .intro { animation-duration: 0.01ms !important; animation-delay: 0s !important; }
+  .intro.out { animation-duration: 0.3s !important; }
+}

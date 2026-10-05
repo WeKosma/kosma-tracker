@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { createLead, updateLead } from "@/app/actions";
+import { createLead, deleteLead, updateLead } from "@/app/actions";
+import { useRouter } from "next/navigation";
+import { ITrash } from "./icons";
 import { CURRENCIES, PRIORITIES, SERVICES, SOURCES, STAGES } from "@/lib/constants";
 import type { Lead } from "@/lib/types";
 import { profileName } from "@/lib/format";
@@ -16,8 +18,9 @@ type Props = {
 };
 
 export default function LeadFormModal({ lead, preset, onClose, onSaved }: Props) {
-  const { team, me } = useShell();
-  const { toast } = useUi();
+  const { team, me, role } = useShell();
+  const { toast, confirm } = useUi();
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [more, setMore] = useState(Boolean(lead));
   const init = (k: keyof Lead, fallback = "") => {
@@ -37,6 +40,23 @@ export default function LeadFormModal({ lead, preset, onClose, onSaved }: Props)
     toast(lead ? "Cambios guardados" : "Lead creado. El equipo fue notificado.");
     onSaved?.(lead ? lead.id : (res.data as { id: string } | undefined)?.id);
     onClose();
+  }
+
+  async function remove() {
+    if (!lead) return;
+    const ok = await confirm(`¿Eliminar ${lead.company}?`, {
+      danger: true,
+      detail: "Se borran también sus reuniones, propuestas, notas, tareas y archivos. No se puede deshacer.",
+    });
+    if (!ok) return;
+    setBusy(true);
+    const r = await deleteLead(lead.id);
+    setBusy(false);
+    if (!r.ok) return toast(r.error, "error");
+    toast(`${lead.company} eliminado`);
+    onClose();
+    router.replace("/leads");
+    router.refresh();
   }
 
   return (
@@ -110,6 +130,11 @@ export default function LeadFormModal({ lead, preset, onClose, onSaved }: Props)
         )}
 
         <div className="row" style={{ justifyContent: "flex-end", borderTop: "1px solid var(--line)", paddingTop: 14 }}>
+          {lead && role === "admin" && (
+            <button type="button" className="btn ghost danger-text" onClick={remove} disabled={busy} style={{ marginRight: "auto" }}>
+              <ITrash /> Eliminar lead
+            </button>
+          )}
           <button type="button" className="btn" onClick={onClose}>Cancelar</button>
           <button className="btn primary" disabled={busy}>{busy ? "Guardando…" : lead ? "Guardar cambios" : "Crear lead"}</button>
         </div>

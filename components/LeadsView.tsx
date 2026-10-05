@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { updateLead } from "@/app/actions";
+import { deleteLeads, updateLead } from "@/app/actions";
 import { PRIORITIES, SOURCES, STAGES, sourceLabel, stageOf } from "@/lib/constants";
 import { compactMoney, date, daysSince, money, relative } from "@/lib/format";
 import type { LeadOverview } from "@/lib/types";
 import { Topbar, useShell } from "./AppShell";
 import { Avatar, StageBadge, useUi } from "./ui";
-import { IBoard, IDownload, ILock, IPlus, IPresent, ISearch, ITable, IVideo, IClock } from "./icons";
+import { IBoard, IDownload, ILock, IPlus, IPresent, ISearch, ITable, IVideo, IClock, ITrash, IX } from "./icons";
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -20,8 +20,11 @@ export default function LeadsView({
 }: { leads: LeadOverview[]; initialView: "board" | "table"; initialStage?: string }) {
   const router = useRouter();
   const { team, nameOf, canWrite, openNewLead, me, role } = useShell();
-  const { toast } = useUi();
+  const { toast, confirm } = useUi();
   const [leads, setLeads] = useState(initial);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [overTrash, setOverTrash] = useState(false);
+  const isAdmin = role === "admin";
   const [view, setView] = useState(initialView);
   const [q, setQ] = useState("");
   const [owner, setOwner] = useState("");
@@ -89,6 +92,36 @@ export default function LeadsView({
     toast(to === "confirmado" ? `${lead.company} confirmado. El equipo fue notificado.` : `${lead.company} → ${stageOf(to).label}`);
     router.refresh();
   }
+
+  /** Elimina uno o varios leads (pide confirmación). Devuelve true si se borraron. */
+  async function removeLeads(ids: string[]) {
+    const list = leads.filter((l) => ids.includes(l.id));
+    if (!list.length) return false;
+    const one = list.length === 1;
+    const ok = await confirm(one ? `¿Eliminar ${list[0].company}?` : `¿Eliminar ${list.length} leads?`, {
+      danger: true,
+      detail: `${one ? "Se borran" : `${list.slice(0, 4).map((l) => l.company).join(", ")}${list.length > 4 ? "…" : ""}. Se borran`} también sus reuniones, propuestas, notas, tareas y archivos. No se puede deshacer.`,
+    });
+    if (!ok) return false;
+    const r = await deleteLeads(list.map((l) => l.id));
+    if (!r.ok) {
+      toast(r.error, "error");
+      return false;
+    }
+    setLeads((ls) => ls.filter((l) => !ids.includes(l.id)));
+    setSelected((sel) => new Set([...sel].filter((id) => !ids.includes(id))));
+    toast(one ? `${list[0].company} eliminado` : `${list.length} leads eliminados`);
+    router.refresh();
+    return true;
+  }
+
+  const toggleSel = (id: string) =>
+    setSelected((sel) => {
+      const next = new Set(sel);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   function exportCsv() {
     const cols: [string, (l: LeadOverview) => unknown][] = [
@@ -179,6 +212,17 @@ export default function LeadsView({
             </div>
           </div>
         ) : view === "board" ? (
+          <>
+          {isAdmin && dragId && (
+            <div
+              className={`trash-drop ${overTrash ? "over" : ""}`}
+              onDragOver={(e) => { e.preventDefault(); setOverTrash(true); setOverCol(null); }}
+              onDragLeave={() => setOverTrash(false)}
+              onDrop={(e) => { e.preventDefault(); const id = dragId; setOverTrash(false); setDragId(null); setOverCol(null); if (id) removeLeads([id]); }}
+            >
+              <ITrash /> Suelta aquí para eliminar
+            </div>
+          )}
           <div className="board">
             {STAGES.map((s) => {
               const col = sorted.filter((l) => l.stage === s.id);
@@ -206,7 +250,7 @@ export default function LeadsView({
                         className={`lcard ${dragId === l.id ? "dragging" : ""} ${l.priority === "alta" ? "prio-alta" : ""}`}
                         draggable={canMove(l)}
                         onDragStart={(e) => { setDragId(l.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", l.id); }}
-                        onDragEnd={() => { setDragId(null); setOverCol(null); }}
+                        onDragEnd={() => { setDragId(null); setOverCol(null); setOverTrash(false); }}
                       >
                         <div className="row between" style={{ alignItems: "flex-start" }}>
                           <div className="co">{l.company}</div>
@@ -242,11 +286,30 @@ export default function LeadsView({
               );
             })}
           </div>
+          </>
         ) : (
           <div className="table-wrap">
+            {isAdmin && selected.size > 0 && (
+              <div className="selbar">
+                <b>{selected.size}</b> {selected.size === 1 ? "seleccionado" : "seleccionados"}
+                <span className="grow" />
+                <button className="btn sm danger" onClick={() => removeLeads([...selected])}><ITrash /> Eliminar</button>
+                <button className="btn ghost sm icon" onClick={() => setSelected(new Set())} title="Quitar selección" aria-label="Quitar selección"><IX /></button>
+              </div>
+            )}
             <table className="t">
               <thead>
                 <tr>
+                  {isAdmin && (
+                    <th className="selcol" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label="Seleccionar todos"
+                        checked={sorted.length > 0 && sorted.every((l) => selected.has(l.id))}
+                        onChange={(e) => setSelected(e.target.checked ? new Set(sorted.map((l) => l.id)) : new Set())}
+                      />
+                    </th>
+                  )}
                   {th("company", "Empresa")}
                   {th("stage", "Etapa")}
                   {th("value", "Valor", "num")}
@@ -259,7 +322,12 @@ export default function LeadsView({
               </thead>
               <tbody>
                 {sorted.map((l) => (
-                  <tr key={l.id} onClick={() => router.push(`/leads/${l.id}`)}>
+                  <tr key={l.id} onClick={() => router.push(`/leads/${l.id}`)} className={selected.has(l.id) ? "sel" : undefined}>
+                    {isAdmin && (
+                      <td className="selcol" onClick={(e) => e.stopPropagation()}>
+                        <input type="checkbox" aria-label={`Seleccionar ${l.company}`} checked={selected.has(l.id)} onChange={() => toggleSel(l.id)} />
+                      </td>
+                    )}
                     <td>
                       <div className="row gap6">
                         <b style={{ fontWeight: 500 }}>{l.company}</b>
@@ -279,7 +347,7 @@ export default function LeadsView({
                     <td className="muted small">{relative(l.last_activity_at)}</td>
                   </tr>
                 ))}
-                {sorted.length === 0 && <tr><td colSpan={8}><div className="empty">Ningún lead con esos filtros.</div></td></tr>}
+                {sorted.length === 0 && <tr><td colSpan={isAdmin ? 9 : 8}><div className="empty">Ningún lead con esos filtros.</div></td></tr>}
               </tbody>
             </table>
           </div>

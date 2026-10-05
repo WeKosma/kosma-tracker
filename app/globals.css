@@ -607,3 +607,27 @@ table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
   .intro *, .intro { animation-duration: 0.01ms !important; animation-delay: 0s !important; }
   .intro.out { animation-duration: 0.3s !important; }
 }
+
+/* ───────── Eliminar leads ───────── */
+.btn.danger-text { color: var(--danger); }
+.btn.danger-text:hover { background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.t .selcol { width: 38px; padding-right: 0; cursor: default; }
+.t .selcol input { width: 15px; height: 15px; accent-color: var(--fg); cursor: pointer; vertical-align: middle; }
+.t tbody tr.sel td { background: var(--surface-3); }
+.selbar {
+  position: sticky; top: 0; left: 0; z-index: 3; display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px; font-size: 13px; background: var(--surface-2); border-bottom: 1px solid var(--line-2);
+  animation: selbar-in 0.18s ease;
+}
+@keyframes selbar-in { from { opacity: 0; transform: translateY(-4px); } }
+.trash-drop {
+  position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 10px; padding: 16px 28px;
+  border: 1px dashed color-mix(in srgb, var(--danger) 55%, transparent); border-radius: 10px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--danger)); color: var(--danger);
+  font: 500 11px/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase;
+  box-shadow: var(--shadow); animation: trash-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.trash-drop.over { transform: translateX(-50%) scale(1.06); background: color-mix(in srgb, var(--bg) 70%, var(--danger)); border-style: solid; }
+@keyframes trash-in { from { opacity: 0; transform: translate(-50%, 12px); } }

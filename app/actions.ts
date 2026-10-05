@@ -160,6 +160,22 @@ export async function deleteLead(id: string): Promise<ActionResult> {
   });
 }
 
+/** Elimina varios leads de una vez (con sus reuniones, propuestas, notas, tareas y archivos). */
+export async function deleteLeads(ids: string[]): Promise<ActionResult<{ count: number }>> {
+  return run(async () => {
+    const { supabase, session } = await ctx();
+    if (session.role !== "admin") throw new Error("Solo un admin puede eliminar leads.");
+    const clean = [...new Set(ids)].filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+    if (!clean.length) return { count: 0 };
+    const { data: files } = await supabase.from("files").select("path").in("lead_id", clean);
+    const paths = (files ?? []).map((f) => f.path).filter(Boolean) as string[];
+    if (paths.length) await supabase.storage.from("tracker").remove(paths);
+    const { error, count } = await supabase.from("leads").delete({ count: "exact" }).in("id", clean);
+    if (error) throw error;
+    return { count: count ?? clean.length };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Tablas hijas: contactos, reuniones, propuestas, notas, tareas, archivos
 // ---------------------------------------------------------------------------

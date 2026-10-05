@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSession } from "@/lib/session";
-import { authUrl, googleConfigured } from "@/lib/google";
+import { authUrl, createState, googleConfigured } from "@/lib/google";
 
 /** Inicia la conexión con Google (solo admins). */
 export async function GET(req: NextRequest) {
@@ -16,8 +16,7 @@ export async function GET(req: NextRequest) {
     back.searchParams.set("google", "sin-configurar");
     return NextResponse.redirect(back);
   }
-  const state = crypto.randomUUID();
-  const res = NextResponse.redirect(authUrl(req.nextUrl.origin, state));
-  res.cookies.set("kosma_google_state", state, { httpOnly: true, secure: true, sameSite: "lax", maxAge: 600, path: "/" });
+  const res = NextResponse.redirect(authUrl(req.nextUrl.origin, createState(session.userId)));
+  res.headers.set("Cache-Control", "no-store");
   return res;
 }

@@ -1,4 +1,5 @@
 import "server-only";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
@@ -18,6 +19,34 @@ export const GOOGLE_SCOPES = [
 
 export const googleConfigured = () =>
   Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.SUPABASE_SECRET_KEY);
+
+/**
+ * "state" firmado para el OAuth (protección CSRF sin depender de cookies,
+ * que algunos CDN pierden en las redirecciones). Va atado al usuario que
+ * inició la conexión y vence a los 15 minutos.
+ */
+const STATE_TTL_MS = 15 * 60 * 1000;
+const sign = (payload: string) =>
+  createHmac("sha256", process.env.GOOGLE_CLIENT_SECRET || process.env.SUPABASE_SECRET_KEY || "kosma")
+    .update(payload)
+    .digest("base64url");
+
+export function createState(userId: string) {
+  const payload = `${userId}.${Date.now()}`;
+  return `${Buffer.from(payload).toString("base64url")}.${sign(payload)}`;
+}
+
+export function verifyState(state: string | null, userId: string) {
+  if (!state) return false;
+  const [b64, sig] = state.split(".");
+  if (!b64 || !sig) return false;
+  const payload = Buffer.from(b64, "base64url").toString();
+  const expected = Buffer.from(sign(payload));
+  const given = Buffer.from(sig);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return false;
+  const [uid, ts] = payload.split(".");
+  return uid === userId && Date.now() - Number(ts) < STATE_TTL_MS;
+}
 
 export function redirectUri(origin: string) {
   const base = (process.env.APP_URL || origin).replace(/\/$/, "") + (process.env.NEXT_PUBLIC_BASE_PATH || "");
@@ -160,7 +189,7 @@ function mapEvent(e: GEvent): CalendarEvent {
     id: e.id,
     title: e.summary || "(Sin título)",
     start: e.start?.dateTime ?? `${e.start?.date}T05:00:00Z`,
-    end: e.end?.dateTime ?? null,
+    end: e.end?.dateTime ?? (e.end?.date ? `${e.end.date}T05:00:00Z` : null),
     allDay,
     location: e.location ?? null,
     meetUrl: e.hangoutLink ?? null,

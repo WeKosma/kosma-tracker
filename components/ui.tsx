@@ -87,7 +87,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const toast = useCallback((text: string, kind: "ok" | "error" = "ok") => {
     const id = ++idRef.current;
     setToasts((t) => [...t, { id, text, kind }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 6000 : 3200);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 9000 : 3200);
   }, []);
 
   const confirm = useCallback(

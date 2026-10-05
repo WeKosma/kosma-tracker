@@ -396,7 +396,7 @@ export async function importCalendarEvent(eventId: string, leadId: string, kind 
   return run(async () => {
     const { supabase } = await ctx();
     const ev = await getEvent(eventId);
-    const duration = ev.end ? Math.max(5, Math.round((new Date(ev.end).getTime() - new Date(ev.start).getTime()) / 60000)) : 45;
+    const duration = ev.end && !ev.allDay ? Math.max(5, Math.round((new Date(ev.end).getTime() - new Date(ev.start).getTime()) / 60000)) : 45;
     const { data, error } = await supabase
       .from("meetings")
       .insert({

@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { disconnectGoogleAction, importCalendarEvent } from "@/app/actions";
 import { MEETING_KINDS, labelOf } from "@/lib/constants";
 import { date, time, todayISO } from "@/lib/format";
+import { addDays, dayKey, shiftMonth } from "@/lib/calendar";
 import { suggestLead, type LeadEmails } from "@/lib/match";
 import { BASE_PATH } from "@/lib/env";
 import type { Meeting, Task } from "@/lib/types";
@@ -14,15 +15,20 @@ import PageTopbar from "./PageTopbar";
 import { useShell } from "./AppShell";
 import { Field, Modal, useUi } from "./ui";
 import { TaskComposer, TaskRow } from "./lead/TasksTab";
-import { ICalendar, IExternal, ILink, IVideo } from "./icons";
-
-const dayKey = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date(iso));
+import { ICalendar, IChevron, IExternal, ILink, IVideo } from "./icons";
 
 type CalendarState = { configured: boolean; connected: boolean; email: string | null; error: string | null };
 
 type Item =
   | { type: "meeting"; at: string; m: Meeting }
-  | { type: "event"; at: string; e: CalendarEvent; suggestion: LeadEmails | null };
+  | { type: "event"; at: string; e: CalendarEvent; suggestion: LeadEmails | null }
+  | { type: "task"; at: string; t: Task };
+
+const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const MAX_CHIPS = 4;
+/** Hora corta de 24 h para la grilla y el panel ("09:00", "15:30"). */
+const hm = (iso: string) =>
+  new Intl.DateTimeFormat("es-CO", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "America/Bogota" }).format(new Date(iso));
 
 const GOOGLE_MSG: Record<string, [string, "ok" | "error"]> = {
   ok: ["Google Calendar conectado. La agenda ya trae los eventos de la cuenta.", "ok"],
@@ -30,12 +36,20 @@ const GOOGLE_MSG: Record<string, [string, "ok" | "error"]> = {
   "sin-permiso": ["Solo un admin puede conectar Google.", "error"],
   "sin-configurar": ["Faltan GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en Netlify.", "error"],
   "estado-invalido": ["La conexión expiró. Inténtalo de nuevo.", "error"],
+  "falta-sql": ["Falta correr en Supabase el SQL de Google (kosma-tracker-supabase-2-google.sql). Córrelo y vuelve a conectar.", "error"],
+  "cliente-invalido": ["Google no reconoce el Client ID o el Client secret. Revisa GOOGLE_CLIENT_ID y GOOGLE_CLIENT_SECRET en Netlify.", "error"],
+  redirect: ["La URL de regreso no coincide. En Google Cloud debe estar https://kosma-tracker.netlify.app/api/google/callback y APP_URL en Netlify igual al dominio.", "error"],
+  "sin-refresh": ["Google no entregó el permiso permanente. En myaccount.google.com/permissions quita KOSMA Tracker y vuelve a conectar.", "error"],
+  "codigo-usado": ["El código de Google ya se usó o venció. Dale Conectar otra vez.", "error"],
+  "supabase-key": ["La clave secreta de Supabase (SUPABASE_SECRET_KEY) no es válida en Netlify.", "error"],
   error: ["Google rechazó la conexión. Revisa la configuración e inténtalo otra vez.", "error"],
 };
 
 export default function AgendaView({
-  meetings, tasks, companies, leads, calendar, events, isAdmin,
+  month, days, meetings, tasks, companies, leads, calendar, events, isAdmin,
 }: {
+  month: string;
+  days: string[];
   meetings: Meeting[];
   tasks: Task[];
   companies: Record<string, string>;
@@ -48,51 +62,70 @@ export default function AgendaView({
   const { toast, confirm } = useUi();
   const router = useRouter();
   const params = useSearchParams();
+  const [pending, startTransition] = useTransition();
+  const today = todayISO();
+  const [selected, setSelected] = useState(() => (today.startsWith(month) ? today : `${month}-01`));
   const [mine, setMine] = useState(false);
-  const [showPast, setShowPast] = useState(false);
   const [onlyKosma, setOnlyKosma] = useState(false);
   const [linking, setLinking] = useState<{ e: CalendarEvent; suggestion: LeadEmails | null } | null>(null);
   const [now] = useState(() => Date.now());
-  const today = todayISO();
 
   useEffect(() => {
     const g = params.get("google");
     if (g && GOOGLE_MSG[g]) {
       toast(...GOOGLE_MSG[g]);
-      router.replace("/agenda");
+      router.replace(`/agenda${params.get("m") ? `?m=${params.get("m")}` : ""}`);
     }
   }, [params, toast, router]);
 
-  // Unir reuniones del tracker + eventos del Calendar (sin duplicar los ya vinculados)
-  const linkedIds = new Set(meetings.map((m) => m.gcal_event_id).filter(Boolean));
-  const items: Item[] = [
-    ...meetings.map((m) => ({ type: "meeting" as const, at: m.starts_at, m })),
-    ...(onlyKosma ? [] : events)
-      .filter((e) => !linkedIds.has(e.id))
-      .map((e) => ({ type: "event" as const, at: e.start, e, suggestion: suggestLead(e.attendees, leads) })),
-  ]
-    .filter((it) => (showPast ? true : new Date(it.at).getTime() >= now - 3600000))
-    .filter((it) => !mine || it.type === "event" || it.m.created_by === me.id)
-    .sort((a, b) => a.at.localeCompare(b.at));
+  const go = (m: string | null) =>
+    startTransition(() => router.push(m ? `/agenda?m=${m}` : "/agenda", { scroll: false }));
 
-  const groups = new Map<string, Item[]>();
-  for (const it of items) {
-    const k = dayKey(it.at);
-    groups.set(k, [...(groups.get(k) ?? []), it]);
-  }
+  // Flechas del teclado para cambiar de mes (si no estás escribiendo)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest("input, textarea, select, [contenteditable=true]") || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key === "ArrowLeft") go(shiftMonth(month, -1));
+      else if (e.key === "ArrowRight") go(shiftMonth(month, 1));
+      else if (e.key.toLowerCase() === "t") go(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month]);
 
-  const myFilter = (t: Task) => !mine || t.assignee_id === me.id;
-  const openTasks = tasks.filter((t) => !t.done && myFilter(t));
+  const myTask = (t: Task) => !mine || t.assignee_id === me.id;
+
+  // Todo lo del mes agrupado por día (reuniones del tracker, eventos de Calendar y tareas con fecha)
+  const byDay = useMemo(() => {
+    const map = new Map<string, Item[]>();
+    const push = (k: string, it: Item) => map.set(k, [...(map.get(k) ?? []), it]);
+    const linked = new Set(meetings.map((m) => m.gcal_event_id).filter(Boolean));
+    for (const m of meetings) if (!mine || m.created_by === me.id) push(dayKey(m.starts_at), { type: "meeting", at: m.starts_at, m });
+    if (!onlyKosma) {
+      for (const e of events) {
+        if (linked.has(e.id)) continue;
+        const it: Item = { type: "event", at: e.start, e, suggestion: suggestLead(e.attendees, leads) };
+        const first = dayKey(e.start);
+        const last = e.allDay && e.end ? addDays(dayKey(e.end), -1) : first;
+        for (let d = first; d <= last; d = addDays(d, 1)) push(d, it);
+      }
+    }
+    for (const t of tasks) if (!t.done && t.due_date && myTask(t)) push(t.due_date, { type: "task", at: `${t.due_date}T23:59:00-05:00`, t });
+    const rank = (it: Item) => (it.type === "event" && it.e.allDay ? 0 : it.type === "task" ? 2 : 1);
+    for (const list of map.values()) list.sort((a, b) => rank(a) - rank(b) || a.at.localeCompare(b.at));
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetings, events, tasks, leads, mine, onlyKosma, me.id]);
+
+  const openTasks = tasks.filter((t) => !t.done && myTask(t));
   const late = openTasks.filter((t) => t.due_date && t.due_date < today);
   const upcoming = openTasks.filter((t) => !t.due_date || t.due_date >= today);
-  const doneRecent = tasks.filter((t) => t.done && myFilter(t)).slice(0, 10);
+  const monthCount = [...byDay.entries()].filter(([k]) => k.startsWith(month)).reduce((n, [, v]) => n + v.filter((i) => i.type !== "task").length, 0);
+  const dayItems = byDay.get(selected) ?? [];
 
-  const label = (k: string) => {
-    if (k === today) return "Hoy";
-    const tomorrow = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Bogota" }).format(new Date(now + 86400000));
-    if (k === tomorrow) return "Mañana";
-    return date(k, { weekday: "long", day: "numeric", month: "long", year: undefined });
-  };
+  const title = date(`${month}-01`, { month: "long", year: "numeric", day: undefined });
 
   async function disconnect() {
     if (!(await confirm("¿Desconectar Google Calendar?", { detail: "La agenda deja de mostrar los eventos de la cuenta y las reuniones nuevas no se agendan solas. Lo ya creado en Calendar no se borra." }))) return;
@@ -102,6 +135,31 @@ export default function AgendaView({
   }
 
   const taskExtra = (t: Task) => (t.lead_id ? <Link href={`/leads/${t.lead_id}?tab=tareas`}>{companies[t.lead_id]}</Link> : "General");
+
+  const chip = (it: Item, key: string) => {
+    if (it.type === "meeting") {
+      return (
+        <span key={key} className={`cal-chip kosma${new Date(it.at).getTime() < now ? " past" : ""}`} title={`${companies[it.m.lead_id] ?? ""} · ${it.m.title}`}>
+          <span className="t">{hm(it.at)}</span><span className="ellipsis">{companies[it.m.lead_id] ?? it.m.title}</span>
+        </span>
+      );
+    }
+    if (it.type === "event") {
+      const past = new Date(it.e.end ?? it.at).getTime() < now;
+      return it.e.allDay ? (
+        <span key={key} className={`cal-chip allday${past ? " past" : ""}`} title={it.e.title}><span className="ellipsis">{it.e.title}</span></span>
+      ) : (
+        <span key={key} className={`cal-chip gcal${past ? " past" : ""}`} title={it.e.title}>
+          <span className="dot" /><span className="t">{hm(it.at)}</span><span className="ellipsis">{it.e.title}</span>
+        </span>
+      );
+    }
+    return (
+      <span key={key} className={`cal-chip task${it.t.due_date! < today ? " late" : ""}`} title={`Tarea: ${it.t.title}`}>
+        <span className="box" /><span className="ellipsis">{it.t.title}</span>
+      </span>
+    );
+  };
 
   return (
     <>
@@ -119,16 +177,15 @@ export default function AgendaView({
         </div>
 
         {/* Estado de la conexión con Google */}
-        <div className="card row wrap" style={{ padding: "12px 16px", marginBottom: 16, gap: 12 }}>
+        <div className="card row wrap" style={{ padding: "10px 16px", marginBottom: 16, gap: 12 }}>
           <ICalendar />
           {calendar.connected ? (
             <>
               <span className="grow small">
-                Conectada al Google Calendar de <b>{calendar.email ?? "KOSMA"}</b>
-                <span className="muted"> · las reuniones que registres se agendan ahí con Meet e invitación</span>
+                Google Calendar de <b>{calendar.email ?? "KOSMA"}</b>
+                <span className="muted"> · las reuniones que registres en un lead se agendan ahí con Meet e invitación</span>
               </span>
               {calendar.error && <span className="badge danger" title={calendar.error}>Error leyendo Calendar</span>}
-              <label className="check tiny muted"><input type="checkbox" checked={onlyKosma} onChange={(e) => setOnlyKosma(e.target.checked)} /> Ocultar eventos sin lead</label>
               {isAdmin && <button className="btn ghost sm" onClick={disconnect}>Desconectar</button>}
             </>
           ) : (
@@ -150,68 +207,118 @@ export default function AgendaView({
           )}
         </div>
 
-        <div className="dash" style={{ marginTop: 0 }}>
-          <section className="card">
-            <div className="card-head">
-              <h2>Reuniones</h2>
-              <label className="check tiny muted"><input type="checkbox" checked={showPast} onChange={(e) => setShowPast(e.target.checked)} /> Ver últimas 2 semanas</label>
+        <div className="agenda">
+          {/* ───────── Mes ───────── */}
+          <section className="card cal">
+            <div className="cal-bar">
+              <button className="btn sm" onClick={() => go(null)} disabled={today.startsWith(month)}>Hoy</button>
+              <div className="row" style={{ gap: 2 }}>
+                <button className="btn ghost sm icon" onClick={() => go(shiftMonth(month, -1))} aria-label="Mes anterior" title="Mes anterior (←)"><IChevron style={{ transform: "rotate(180deg)" }} /></button>
+                <button className="btn ghost sm icon" onClick={() => go(shiftMonth(month, 1))} aria-label="Mes siguiente" title="Mes siguiente (→)"><IChevron /></button>
+              </div>
+              <h2 className="cal-title">{title}</h2>
+              <span className="tiny faint nowrap">{monthCount} {monthCount === 1 ? "evento" : "eventos"}</span>
+              <span className="grow" />
+              <div className="cal-legend tiny muted">
+                <span><i className="lg kosma" /> Reunión de lead</span>
+                {calendar.connected && <span><i className="lg gcal" /> Calendar</span>}
+                <span><i className="lg task" /> Tarea</span>
+              </div>
+              {calendar.connected && (
+                <label className="check tiny muted"><input type="checkbox" checked={onlyKosma} onChange={(e) => setOnlyKosma(e.target.checked)} /> Solo leads</label>
+              )}
             </div>
-            {groups.size === 0 && (
-              <div className="empty">
-                {calendar.connected ? "No hay reuniones ni eventos en los próximos 60 días." : "No hay reuniones agendadas. Se registran desde la ficha de cada lead."}
-              </div>
-            )}
-            {[...groups.entries()].map(([k, its]) => (
-              <div key={k}>
-                <div className="kicker" style={{ padding: "14px 16px 6px", color: k === today ? "var(--fg)" : undefined }}>{label(k)}</div>
-                {its.map((it) =>
-                  it.type === "meeting" ? (
-                    <div key={it.m.id} className="list-item">
-                      <span className="when">{time(it.m.starts_at)}</span>
-                      <Link href={`/leads/${it.m.lead_id}?tab=reuniones`} className="grow ellipsis">
-                        <b style={{ fontWeight: 500 }}>{companies[it.m.lead_id] ?? "—"}</b> <span className="muted">· {it.m.title}</span>
-                      </Link>
-                      {it.m.gcal_event_id && <span title="En Google Calendar"><ICalendar width={13} style={{ color: "var(--ok)" }} /></span>}
-                      {it.m.meet_url && <a className="btn ghost sm" href={it.m.meet_url} target="_blank" rel="noreferrer"><IVideo /> Meet</a>}
-                      <span className="badge">{labelOf(MEETING_KINDS, it.m.kind)}</span>
-                      <span className="tiny faint nowrap">{nameOf(it.m.created_by)}</span>
-                    </div>
-                  ) : (
-                    <div key={it.e.id} className="list-item" style={{ opacity: 0.92 }}>
-                      <span className="when">{it.e.allDay ? "Todo el día" : time(it.e.start)}</span>
-                      <span className="grow ellipsis">
-                        <span className="muted">{it.e.title}</span>
-                        {it.suggestion && <span className="tiny faint"> · ¿{it.suggestion.company}?</span>}
+
+            <div className={`cal-grid${pending ? " loading" : ""}`} role="grid" aria-label={title}>
+              {WEEKDAYS.map((w) => <div key={w} className="cal-wd">{w}</div>)}
+              {days.map((d) => {
+                const its = byDay.get(d) ?? [];
+                const out = !d.startsWith(month);
+                const extra = its.length - MAX_CHIPS;
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    className={`cal-day${out ? " out" : ""}${d === today ? " today" : ""}${d === selected ? " sel" : ""}${d < today ? " before" : ""}`}
+                    onClick={() => setSelected(d)}
+                    aria-label={date(d, { weekday: "long", day: "numeric", month: "long", year: undefined })}
+                    aria-pressed={d === selected}
+                  >
+                    <span className="num">{Number(d.slice(8))}</span>
+                    <span className="chips">
+                      {its.slice(0, extra > 0 ? MAX_CHIPS - 1 : MAX_CHIPS).map((it, i) => chip(it, `${d}-${i}`))}
+                      {extra > 0 && <span className="cal-more">+{extra + 1} más</span>}
+                    </span>
+                    {its.length > 0 && (
+                      <span className="dots" aria-hidden>
+                        {its.slice(0, 4).map((it, i) => <i key={i} className={`lg ${it.type === "meeting" ? "kosma" : it.type === "task" ? "task" : "gcal"}`} />)}
                       </span>
-                      {it.e.meetUrl && <a className="btn ghost sm" href={it.e.meetUrl} target="_blank" rel="noreferrer"><IVideo /> Meet</a>}
-                      {it.e.htmlLink && <a className="btn ghost sm icon" href={it.e.htmlLink} target="_blank" rel="noreferrer" title="Abrir en Google Calendar"><IExternal /></a>}
-                      {canWrite && leads.length > 0 && (
-                        <button className="btn sm" onClick={() => setLinking({ e: it.e, suggestion: it.suggestion })}><ILink /> Vincular</button>
-                      )}
-                      <span className="badge"><ICalendar width={11} /> Calendar</span>
-                    </div>
-                  )
-                )}
-              </div>
-            ))}
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </section>
 
+          {/* ───────── Día seleccionado + tareas ───────── */}
           <div className="stack gap16">
+            <section className="card">
+              <div className="card-head">
+                <div>
+                  <div className="kicker">{selected === today ? "Hoy" : date(selected, { weekday: "long", day: undefined, month: undefined, year: undefined })}</div>
+                  <h2 className="day-title">{date(selected, { day: "numeric", month: "long", year: undefined })}</h2>
+                </div>
+                <span className="tiny faint">{dayItems.length || "Sin"} {dayItems.length === 1 ? "cosa" : "cosas"}</span>
+              </div>
+              {dayItems.length === 0 && <div className="empty">Día libre.</div>}
+              {dayItems.map((it, i) =>
+                it.type === "meeting" ? (
+                  <div key={`m${it.m.id}`} className="day-item">
+                    <span className="when">{hm(it.m.starts_at)}</span>
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <Link href={`/leads/${it.m.lead_id}?tab=reuniones`} className="ellipsis" style={{ display: "block" }}>
+                        <b style={{ fontWeight: 500 }}>{companies[it.m.lead_id] ?? "—"}</b> <span className="muted">· {it.m.title}</span>
+                      </Link>
+                      <div className="row tiny faint" style={{ gap: 8, marginTop: 4 }}>
+                        <span className="badge">{labelOf(MEETING_KINDS, it.m.kind)}</span>
+                        <span>{nameOf(it.m.created_by).split(" ")[0]}</span>
+                        {it.m.gcal_event_id && <span title="Está en Google Calendar" className="row" style={{ gap: 4 }}><ICalendar width={12} /></span>}
+                      </div>
+                    </div>
+                    {it.m.meet_url && <a className="btn ghost sm icon" href={it.m.meet_url} target="_blank" rel="noreferrer" title="Entrar a Meet"><IVideo /></a>}
+                  </div>
+                ) : it.type === "event" ? (
+                  <div key={`e${it.e.id}-${i}`} className="day-item">
+                    <span className="when">{it.e.allDay ? "Todo el día" : hm(it.e.start)}</span>
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="ellipsis">{it.e.title}</div>
+                      <div className="tiny faint ellipsis" style={{ marginTop: 3 }}>
+                        {it.suggestion ? <>¿Es de <b>{it.suggestion.company}</b>?</> : it.e.attendees.length > 0 ? it.e.attendees.slice(0, 3).join(", ") : "Google Calendar"}
+                      </div>
+                    </div>
+                    <div className="row" style={{ gap: 4 }}>
+                      {it.e.meetUrl && <a className="btn ghost sm icon" href={it.e.meetUrl} target="_blank" rel="noreferrer" title="Entrar a Meet"><IVideo /></a>}
+                      {it.e.htmlLink && <a className="btn ghost sm icon" href={it.e.htmlLink} target="_blank" rel="noreferrer" title="Abrir en Google Calendar"><IExternal /></a>}
+                      {canWrite && leads.length > 0 && (
+                        <button className="btn sm icon" onClick={() => setLinking({ e: it.e, suggestion: it.suggestion })} title="Vincular a un lead"><ILink /></button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <TaskRow key={`t${it.t.id}`} t={it.t} editable={canWrite} extra={taskExtra(it.t)} />
+                )
+              )}
+            </section>
+
             <section className="card">
               <div className="card-head"><h2>Tareas</h2><span className="tiny faint">{openTasks.length} abiertas</span></div>
               {canWrite && <TaskComposer />}
               {late.length > 0 && <div className="kicker" style={{ padding: "12px 16px 4px", color: "var(--danger)" }}>Vencidas</div>}
               {late.map((t) => <TaskRow key={t.id} t={t} editable={canWrite} extra={taskExtra(t)} />)}
-              {late.length > 0 && <div className="kicker" style={{ padding: "12px 16px 4px" }}>Próximas</div>}
+              {late.length > 0 && upcoming.length > 0 && <div className="kicker" style={{ padding: "12px 16px 4px" }}>Próximas</div>}
               {upcoming.map((t) => <TaskRow key={t.id} t={t} editable={canWrite} extra={taskExtra(t)} />)}
               {openTasks.length === 0 && <div className="empty">Nada pendiente. Limpio.</div>}
             </section>
-            {doneRecent.length > 0 && (
-              <section className="card">
-                <div className="card-head"><h2>Completadas recientemente</h2></div>
-                {doneRecent.map((t) => <TaskRow key={t.id} t={t} editable={canWrite} extra={t.lead_id ? companies[t.lead_id] : "General"} />)}
-              </section>
-            )}
           </div>
         </div>
       </div>

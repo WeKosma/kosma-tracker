@@ -1,19 +1,25 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/session";
 import { googleStatus, listEvents } from "@/lib/google";
+import { bogotaMidnight, isMonth, monthGrid } from "@/lib/calendar";
+import { todayISO } from "@/lib/format";
 import type { Meeting, Task } from "@/lib/types";
 import type { LeadEmails } from "@/lib/match";
 import AgendaView from "@/components/AgendaView";
 
 export const metadata = { title: "Agenda" };
 
-export default async function AgendaPage() {
+export default async function AgendaPage({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
   const session = await requireSession();
   const supabase = await createClient();
-  const from = new Date(Date.now() - 14 * 86400000).toISOString();
-  const to = new Date(Date.now() + 60 * 86400000).toISOString();
+  const { m } = await searchParams;
+  const month = isMonth(m) ? m : todayISO().slice(0, 7);
+  const grid = monthGrid(month);
+  const from = bogotaMidnight(grid.start);
+  const to = bogotaMidnight(grid.end);
+
   const [{ data: meetings }, { data: tasks }, { data: leads }, { data: contacts }, status] = await Promise.all([
-    supabase.from("meetings").select("*").gte("starts_at", from).lte("starts_at", to).order("starts_at"),
+    supabase.from("meetings").select("*").gte("starts_at", from).lt("starts_at", to).order("starts_at"),
     supabase.from("tasks").select("*").order("done").order("due_date", { ascending: true, nullsFirst: false }).limit(300),
     supabase.from("leads").select("id,company,contact_email").order("company"),
     supabase.from("contacts").select("lead_id,email"),
@@ -32,6 +38,9 @@ export default async function AgendaPage() {
 
   return (
     <AgendaView
+      key={month}
+      month={month}
+      days={grid.days}
       meetings={(meetings ?? []) as Meeting[]}
       tasks={(tasks ?? []) as Task[]}
       companies={companies}

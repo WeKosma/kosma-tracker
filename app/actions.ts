@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createEvent, deleteEvent, disconnectGoogle, getEvent, googleStatus, updateEvent } from "@/lib/google";
 import { getSession } from "@/lib/session";
 import { notifyConfirmed, notifyNewLead } from "@/lib/mail";
 import { CURRENCIES, STAGE_IDS } from "@/lib/constants";
@@ -165,7 +166,7 @@ export async function deleteLead(id: string): Promise<ActionResult> {
 
 const CHILD_FIELDS = {
   contacts: ["lead_id", "name", "role", "email", "phone", "linkedin", "notes"],
-  meetings: ["lead_id", "title", "kind", "mode", "starts_at", "duration_min", "location", "attendees", "summary", "next_steps", "recording_url"],
+  meetings: ["lead_id", "title", "kind", "mode", "starts_at", "duration_min", "location", "attendees", "summary", "next_steps", "recording_url", "invitees"],
   proposals: ["lead_id", "title", "kind", "version", "status", "amount", "currency", "sent_at", "url", "file_path", "notes"],
   notes: ["lead_id", "body", "pinned"],
   tasks: ["lead_id", "title", "due_date", "done", "assignee_id"],
@@ -316,6 +317,116 @@ export async function updateProfile(fullName: string): Promise<ActionResult> {
     const { supabase, session } = await ctx();
     const { error } = await supabase.from("profiles").update({ full_name: fullName.trim() || null }).eq("id", session.userId);
     if (error) throw error;
+    return undefined;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Reuniones + Google Calendar (cuenta conectada: hello@wearekosma.com)
+// ---------------------------------------------------------------------------
+
+export type CalendarOpts = { sync: boolean; meet: boolean; notify: boolean };
+
+/** Guarda la reunión y, si se pide, la crea/actualiza en Google Calendar con invitación y Meet. */
+export async function saveMeeting(
+  input: Record<string, unknown>,
+  cal: CalendarOpts
+): Promise<ActionResult<{ id: string; gcalError?: string; meetUrl?: string | null }>> {
+  return run(async () => {
+    const { supabase } = await ctx();
+    const row = pick(input, CHILD_FIELDS.meetings);
+    if ("duration_min" in row) row.duration_min = row.duration_min == null ? null : Number(row.duration_min);
+    const id = typeof input.id === "string" ? input.id : null;
+
+    let meeting: Record<string, unknown>;
+    if (id) {
+      delete row.lead_id;
+      const { data, error } = await supabase.from("meetings").update(row).eq("id", id).select("*");
+      if (error) throw error;
+      if (!data?.length) throw new Error("No se pudo guardar: la ficha está bloqueada o no tienes permiso.");
+      meeting = data[0];
+    } else {
+      const { data, error } = await supabase.from("meetings").insert(row).select("*").single();
+      if (error) throw error;
+      meeting = data;
+    }
+
+    if (!cal.sync) return { id: meeting.id as string };
+
+    try {
+      const status = await googleStatus();
+      if (!status.connected) return { id: meeting.id as string, gcalError: "Google Calendar no está conectado (Agenda → Conectar)." };
+      const { data: lead } = await supabase.from("leads").select("company").eq("id", meeting.lead_id).single();
+      const company = (lead?.company as string) ?? "Cliente";
+      const o = await origin();
+      const appLink = o ? `${o}${process.env.NEXT_PUBLIC_BASE_PATH || ""}/leads/${meeting.lead_id}` : undefined;
+      const m = meeting as Parameters<typeof createEvent>[0];
+      const res = meeting.gcal_event_id
+        ? await updateEvent(meeting.gcal_event_id as string, m, company, { ...cal, appLink })
+        : await createEvent(m, company, { ...cal, appLink });
+      await supabase.from("meetings").update({ gcal_event_id: res.id, meet_url: res.meetUrl }).eq("id", meeting.id);
+      return { id: meeting.id as string, meetUrl: res.meetUrl };
+    } catch (e) {
+      return { id: meeting.id as string, gcalError: e instanceof Error ? e.message : String(e) };
+    }
+  });
+}
+
+/** Borra la reunión del tracker y (opcional) el evento en Google Calendar avisando a los invitados. */
+export async function deleteMeeting(id: string, alsoCalendar: boolean): Promise<ActionResult<{ gcalError?: string }>> {
+  return run(async () => {
+    const { supabase } = await ctx();
+    const { data: m } = await supabase.from("meetings").select("gcal_event_id").eq("id", id).single();
+    const { data, error } = await supabase.from("meetings").delete().eq("id", id).select("id");
+    if (error) throw error;
+    if (!data?.length) throw new Error("No se pudo eliminar: la ficha está bloqueada o no tienes permiso.");
+    if (alsoCalendar && m?.gcal_event_id) {
+      try {
+        await deleteEvent(m.gcal_event_id, true);
+      } catch (e) {
+        return { gcalError: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    return {};
+  });
+}
+
+/** Trae un evento del Calendar de hello@ y lo registra como reunión de un lead. */
+export async function importCalendarEvent(eventId: string, leadId: string, kind = "seguimiento"): Promise<ActionResult<{ id: string }>> {
+  return run(async () => {
+    const { supabase } = await ctx();
+    const ev = await getEvent(eventId);
+    const duration = ev.end ? Math.max(5, Math.round((new Date(ev.end).getTime() - new Date(ev.start).getTime()) / 60000)) : 45;
+    const { data, error } = await supabase
+      .from("meetings")
+      .insert({
+        lead_id: leadId,
+        title: ev.title,
+        kind,
+        mode: ev.meetUrl ? "virtual" : ev.location ? "presencial" : "virtual",
+        starts_at: ev.start,
+        duration_min: duration,
+        location: ev.location ?? ev.meetUrl,
+        invitees: ev.attendees.join(", ") || null,
+        summary: ev.description,
+        gcal_event_id: ev.id,
+        meet_url: ev.meetUrl,
+      })
+      .select("id")
+      .single();
+    if (error) {
+      if (/duplicate key/i.test(error.message)) throw new Error("Ese evento ya está vinculado a un lead.");
+      throw error;
+    }
+    return { id: data.id as string };
+  });
+}
+
+export async function disconnectGoogleAction(): Promise<ActionResult> {
+  return run(async () => {
+    const { session } = await ctx();
+    if (session.role !== "admin") throw new Error("Solo un admin puede desconectar Google.");
+    await disconnectGoogle();
     return undefined;
   });
 }

@@ -57,6 +57,7 @@ export type Meeting = {
   id: string; lead_id: string; title: string; kind: string; mode: string; starts_at: string;
   duration_min: number | null; location: string | null; attendees: string | null; summary: string | null;
   next_steps: string | null; recording_url: string | null; created_by: string | null; created_at: string;
+  gcal_event_id?: string | null; meet_url?: string | null; invitees?: string | null;
 };
 
 export type Proposal = {

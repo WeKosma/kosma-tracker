@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { deleteRow, saveRow } from "@/app/actions";
+import { deleteMeeting, saveMeeting } from "@/app/actions";
 import { MEETING_KINDS, MEETING_MODES, labelOf } from "@/lib/constants";
 import { bogotaLocalToISO, dateTime, isoToBogotaLocal } from "@/lib/format";
 import type { LeadOverview, Meeting } from "@/lib/types";
@@ -26,7 +26,11 @@ function gcalLink(m: Meeting, company: string, guestEmail?: string | null) {
   return `https://calendar.google.com/calendar/render?${params}`;
 }
 
-export default function MeetingsTab({ lead, meetings, editable }: { lead: LeadOverview; meetings: Meeting[]; editable: boolean }) {
+export type CalendarInfo = { connected: boolean; email?: string | null };
+
+export default function MeetingsTab({
+  lead, meetings, editable, calendar,
+}: { lead: LeadOverview; meetings: Meeting[]; editable: boolean; calendar: CalendarInfo }) {
   const { nameOf } = useShell();
   const { toast, confirm } = useUi();
   const [modal, setModal] = useState<Partial<Meeting> | null>(null);
@@ -35,9 +39,13 @@ export default function MeetingsTab({ lead, meetings, editable }: { lead: LeadOv
   const past = meetings.filter((m) => new Date(m.starts_at).getTime() <= now);
 
   async function remove(m: Meeting) {
-    if (!(await confirm(`¿Eliminar la reunión “${m.title}”?`, { danger: true }))) return;
-    const r = await deleteRow("meetings", m.id);
-    if (!r.ok) toast(r.error, "error");
+    const detail = m.gcal_event_id
+      ? "También se cancela en Google Calendar y se les avisa a los invitados."
+      : "Esta acción no se puede deshacer.";
+    if (!(await confirm(`¿Eliminar la reunión “${m.title}”?`, { danger: true, detail }))) return;
+    const r = await deleteMeeting(m.id, true);
+    if (!r.ok) return toast(r.error, "error");
+    if (r.data?.gcalError) toast(`Borrada del tracker, pero no de Calendar: ${r.data.gcalError}`, "error");
   }
 
   const render = (m: Meeting, future: boolean) => (
@@ -48,18 +56,21 @@ export default function MeetingsTab({ lead, meetings, editable }: { lead: LeadOv
             <span className="item-title">{m.title}</span>
             <span className="badge">{labelOf(MEETING_KINDS, m.kind)}</span>
             <span className="badge">{labelOf(MEETING_MODES, m.mode)}</span>
+            {m.gcal_event_id && <span className="badge ok"><ICalendar width={11} /> En Calendar</span>}
           </div>
           <div className="item-meta">
             <span className="mono">{dateTime(m.starts_at)}</span>
             {m.duration_min && <span>{m.duration_min} min</span>}
             {m.attendees && <span>Con: {m.attendees}</span>}
+            {m.invitees && <span>Invitados: {m.invitees}</span>}
             {m.location && (/^https?:/.test(m.location) ? <a href={m.location} target="_blank" rel="noreferrer" className="row gap4"><IVideo width={12} /> Enlace</a> : <span>{m.location}</span>)}
             <span>Registró {nameOf(m.created_by)}</span>
           </div>
           {m.summary && <div className="item-body">{m.summary}</div>}
           {m.next_steps && <div className="item-body"><span className="kicker" style={{ marginRight: 8 }}>Siguientes pasos</span>{m.next_steps}</div>}
           <div className="row wrap gap6 mt8">
-            {future && <a className="btn sm" href={gcalLink(m, lead.company, lead.contact_email)} target="_blank" rel="noreferrer"><ICalendar /> Agregar a Google Calendar</a>}
+            {m.meet_url && <a className="btn sm" href={m.meet_url} target="_blank" rel="noreferrer"><IVideo /> Entrar a Meet</a>}
+            {future && !m.gcal_event_id && !calendar.connected && <a className="btn sm" href={gcalLink(m, lead.company, lead.contact_email)} target="_blank" rel="noreferrer"><ICalendar /> Agregar a Google Calendar</a>}
             {m.recording_url && <a className="btn ghost sm" href={m.recording_url} target="_blank" rel="noreferrer"><IExternal /> Grabación / acta</a>}
           </div>
         </div>
@@ -94,15 +105,22 @@ export default function MeetingsTab({ lead, meetings, editable }: { lead: LeadOv
         </div>
       </section>
 
-      {modal && <MeetingModal lead={lead} meeting={modal} onClose={() => setModal(null)} />}
+      {modal && <MeetingModal lead={lead} meeting={modal} calendar={calendar} onClose={() => setModal(null)} />}
     </div>
   );
 }
 
-function MeetingModal({ lead, meeting, onClose }: { lead: LeadOverview; meeting: Partial<Meeting>; onClose: () => void }) {
+function MeetingModal({
+  lead, meeting, calendar, onClose,
+}: { lead: LeadOverview; meeting: Partial<Meeting>; calendar: CalendarInfo; onClose: () => void }) {
   const { toast } = useUi();
   const [busy, setBusy] = useState(false);
+  const [startedAt] = useState(() => Date.now());
   const defaultStart = meeting.starts_at ? isoToBogotaLocal(meeting.starts_at) : isoToBogotaLocal(new Date().toISOString()).slice(0, 14) + "00";
+  const isFuture = meeting.starts_at ? new Date(meeting.starts_at).getTime() > startedAt : true;
+  const [sync, setSync] = useState(calendar.connected && (Boolean(meeting.gcal_event_id) || (!meeting.id && isFuture)));
+  const [meet, setMeet] = useState(!meeting.meet_url && (meeting.mode ?? "virtual") === "virtual");
+  const [notify, setNotify] = useState(true);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -110,10 +128,12 @@ function MeetingModal({ lead, meeting, onClose }: { lead: LeadOverview; meeting:
     const starts_at = bogotaLocalToISO(data.starts_at);
     if (!starts_at) return toast("Falta la fecha", "error");
     setBusy(true);
-    const r = await saveRow("meetings", { ...data, starts_at, lead_id: lead.id, id: meeting.id });
+    const r = await saveMeeting({ ...data, starts_at, lead_id: lead.id, id: meeting.id }, { sync, meet, notify });
     setBusy(false);
     if (!r.ok) return toast(r.error, "error");
-    toast(meeting.id ? "Reunión actualizada" : "Reunión registrada");
+    if (r.data?.gcalError) toast(`Guardada en el tracker, pero Calendar falló: ${r.data.gcalError}`, "error");
+    else if (sync) toast(notify ? "Agendada en Calendar. Invitación enviada." : "Agendada en Calendar.");
+    else toast(meeting.id ? "Reunión actualizada" : "Reunión registrada");
     onClose();
   }
 
@@ -134,7 +154,19 @@ function MeetingModal({ lead, meeting, onClose }: { lead: LeadOverview; meeting:
         </Field>
         <Field label="Duración (min)"><input className="input" type="number" min={5} step={5} name="duration_min" defaultValue={meeting.duration_min ?? 45} /></Field>
         <Field label="Lugar o enlace"><input className="input" name="location" defaultValue={meeting.location ?? ""} placeholder="Meet / oficina" /></Field>
-        <Field label="Asistentes" className="span-all"><input className="input" name="attendees" defaultValue={meeting.attendees ?? lead.contact_name ?? ""} placeholder="Quiénes estuvieron" /></Field>
+        <Field label="Asistentes (nombres)" className="span2"><input className="input" name="attendees" defaultValue={meeting.attendees ?? lead.contact_name ?? ""} placeholder="Quiénes participan" /></Field>
+        <Field label="Invitados (correos, separados por coma)" className="span2"><input className="input" name="invitees" defaultValue={meeting.invitees ?? lead.contact_email ?? ""} placeholder="cliente@empresa.com, pol@…" /></Field>
+        <div className="span-all card" style={{ padding: "12px 14px", background: "var(--surface-2)" }}>
+          {calendar.connected ? (
+            <div className="row wrap gap16">
+              <label className="check"><input type="checkbox" checked={sync} onChange={(e) => setSync(e.target.checked)} /> <ICalendar width={14} /> Agendar en el Calendar de {calendar.email ?? "KOSMA"}</label>
+              {sync && <label className="check"><input type="checkbox" checked={meet} onChange={(e) => setMeet(e.target.checked)} disabled={Boolean(meeting.meet_url)} /> <IVideo width={14} /> {meeting.meet_url ? "Ya tiene Meet" : "Crear enlace de Google Meet"}</label>}
+              {sync && <label className="check"><input type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} /> Enviar invitación a los correos</label>}
+            </div>
+          ) : (
+            <span className="tiny muted"><ICalendar width={12} style={{ display: "inline", verticalAlign: "-2px" }} /> Conecta Google Calendar desde <b>Agenda</b> para que las reuniones se agenden solas con Meet e invitación.</span>
+          )}
+        </div>
         <Field label="Resumen / qué se habló" className="span-all"><textarea className="textarea" name="summary" defaultValue={meeting.summary ?? ""} /></Field>
         <Field label="Siguientes pasos" className="span2"><textarea className="textarea" name="next_steps" defaultValue={meeting.next_steps ?? ""} style={{ minHeight: 64 }} /></Field>
         <Field label="Grabación o acta (link)" className="span2"><input className="input" name="recording_url" defaultValue={meeting.recording_url ?? ""} placeholder="https://" /></Field>

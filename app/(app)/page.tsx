@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { profileName } from "@/lib/format";
 import type { Activity, LeadOverview, Meeting, Task } from "@/lib/types";
 import DashboardView from "@/components/DashboardView";
+import { googleStatus, listEvents } from "@/lib/google";
 
 export const metadata = { title: "Inicio" };
 
@@ -22,8 +23,12 @@ export default async function Dashboard() {
     supabase.from("meetings").select("id", { count: "exact", head: true }).gte("starts_at", monthStart).lte("starts_at", now.toISOString()),
   ]);
 
+  const status = await googleStatus().catch(() => ({ connected: false }));
+  const cal = status.connected ? await listEvents(new Date(Date.now() - 3600000).toISOString(), in14) : { events: [] };
+
   return (
     <DashboardView
+      calendarEvents={cal.events}
       leadsData={(leadsData ?? []) as LeadOverview[]}
       meetingsData={(meetingsData ?? []) as Meeting[]}
       tasksData={(tasksData ?? []) as Task[]}

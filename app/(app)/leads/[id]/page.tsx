@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/session";
 import type { Activity, Contact, FileRow, LeadOverview, Meeting, Note, Proposal, Task } from "@/lib/types";
 import LeadDetail from "@/components/lead/LeadDetail";
+import { googleStatus } from "@/lib/google";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -31,6 +32,7 @@ export default async function LeadPage({
     supabase.from("activity").select("*").eq("lead_id", id).order("created_at", { ascending: false }).limit(80),
   ]);
   if (!lead.data) notFound();
+  const calendar = await googleStatus().catch(() => ({ connected: false, email: null }));
 
   return (
     <LeadDetail
@@ -44,6 +46,7 @@ export default async function LeadPage({
       files={(files.data ?? []) as FileRow[]}
       activity={(activity.data ?? []) as Activity[]}
       initialTab={sp.tab}
+      calendar={{ connected: calendar.connected, email: calendar.email ?? null }}
     />
   );
 }

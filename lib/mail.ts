@@ -1,5 +1,7 @@
 import "server-only";
 import nodemailer from "nodemailer";
+import MailComposer from "nodemailer/lib/mail-composer";
+import { canSendWithGmailApi, gmailSend } from "@/lib/google";
 
 function appUrl(fallbackOrigin?: string) {
   const base = (process.env.APP_URL || fallbackOrigin || "").replace(/\/$/, "");
@@ -47,21 +49,23 @@ function layout(opts: { kicker: string; title: string; rows: [string, string][];
 }
 
 async function send(to: string[], subject: string, html: string, text: string) {
-  const t = transport();
-  if (!t) {
-    console.warn("[mail] GMAIL_USER / GMAIL_APP_PASSWORD no configurados. Correo omitido:", subject);
-    return { sent: false };
-  }
   if (!to.length) return { sent: false };
+  const from = `"KOSMA Tracker" <${process.env.GMAIL_USER || "hello@wearekosma.com"}>`;
   try {
-    await t.sendMail({
-      from: `"KOSMA Tracker" <${process.env.GMAIL_USER}>`,
-      to: to.join(", "),
-      subject,
-      html,
-      text,
-    });
-    return { sent: true };
+    // 1) Contraseña de aplicación de Gmail (SMTP), si está configurada
+    const t = transport();
+    if (t) {
+      await t.sendMail({ from, to: to.join(", "), subject, html, text });
+      return { sent: true };
+    }
+    // 2) Si no, la cuenta de Google conectada en el tracker (Gmail API)
+    if (await canSendWithGmailApi()) {
+      const mime = await new MailComposer({ from, to: to.join(", "), subject, html, text }).compile().build();
+      await gmailSend(mime);
+      return { sent: true };
+    }
+    console.warn("[mail] Sin Gmail configurado (ni contraseña de aplicación ni Google conectado). Correo omitido:", subject);
+    return { sent: false };
   } catch (err) {
     console.error("[mail] Error enviando correo:", err);
     return { sent: false };

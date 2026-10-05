@@ -12,7 +12,7 @@ import LeadFormModal from "../LeadFormModal";
 import { Avatar, Field, Modal, StageBadge, useUi } from "../ui";
 import { IEdit, IExternal, IFolder, ILock, IMail, IPhone, ITrash, IUnlock } from "../icons";
 import SummaryTab from "./SummaryTab";
-import MeetingsTab from "./MeetingsTab";
+import MeetingsTab, { type CalendarInfo } from "./MeetingsTab";
 import ProposalsTab from "./ProposalsTab";
 import NotesTab from "./NotesTab";
 import TasksTab from "./TasksTab";
@@ -28,6 +28,7 @@ type Props = {
   files: FileRow[];
   activity: Activity[];
   initialTab?: string;
+  calendar: CalendarInfo;
 };
 
 const TABS = ["resumen", "reuniones", "propuestas", "notas", "tareas", "archivos"] as const;
@@ -171,7 +172,7 @@ export default function LeadDetail(p: Props) {
               ))}
             </div>
             {tab === "resumen" && <SummaryTab lead={lead} contacts={p.contacts} notes={p.notes} editable={editable} onEdit={() => setEditing(true)} />}
-            {tab === "reuniones" && <MeetingsTab lead={lead} meetings={p.meetings} editable={editable} />}
+            {tab === "reuniones" && <MeetingsTab lead={lead} meetings={p.meetings} editable={editable} calendar={p.calendar} />}
             {tab === "propuestas" && <ProposalsTab lead={lead} proposals={p.proposals} editable={editable} />}
             {tab === "notas" && <NotesTab leadId={lead.id} notes={p.notes} editable={editable} />}
             {tab === "tareas" && <TasksTab leadId={lead.id} tasks={p.tasks} editable={editable} />}

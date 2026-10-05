@@ -2,11 +2,12 @@ import Link from "next/link";
 import { COLD_DAYS, OPEN_STAGES, STAGES, labelOf, MEETING_KINDS } from "@/lib/constants";
 import { compactMoney, date, daysSince, time, todayISO } from "@/lib/format";
 import type { Activity, LeadOverview, Meeting, Task } from "@/lib/types";
+import type { CalendarEvent } from "@/lib/google";
 import PageTopbar from "@/components/PageTopbar";
 import TaskCheck from "@/components/TaskCheck";
 import { ActivityList, TeamName } from "@/components/TeamName";
 import { StageDot } from "@/components/ui";
-import { ISnow } from "@/components/icons";
+import { ICalendar, ISnow } from "@/components/icons";
 
 function sumByCurrency(leads: LeadOverview[]) {
   const out: Record<string, number> = {};
@@ -19,8 +20,9 @@ function moneyLine(m: Record<string, number>) {
 }
 
 export default function DashboardView({
-  leadsData, meetingsData, tasksData, actData, meetingsMonth, firstName, readOnly,
+  leadsData, meetingsData, tasksData, actData, meetingsMonth, firstName, readOnly, calendarEvents = [],
 }: {
+  calendarEvents?: CalendarEvent[];
   leadsData: LeadOverview[]; meetingsData: Meeting[]; tasksData: Task[]; actData: Activity[];
   meetingsMonth: number; firstName: string; readOnly: boolean;
 }) {
@@ -30,6 +32,13 @@ export default function DashboardView({
   const meetings = meetingsData;
   const tasks = tasksData;
   const activity = actData;
+  const linked = new Set(meetings.map((m) => m.gcal_event_id).filter(Boolean));
+  const upcomingItems: { at: string; m?: Meeting; e?: CalendarEvent }[] = [
+    ...meetings.map((m) => ({ at: m.starts_at, m })),
+    ...calendarEvents.filter((e) => !linked.has(e.id)).map((e) => ({ at: e.start, e })),
+  ]
+    .sort((x, y) => x.at.localeCompare(y.at))
+    .slice(0, 8);
   const company: Record<string, string> = Object.fromEntries(leads.map((l) => [l.id, l.company]));
 
   const open = leads.filter((l) => OPEN_STAGES.includes(l.stage as never));
@@ -41,7 +50,7 @@ export default function DashboardView({
     .filter((l) => daysSince(l.last_activity_at) >= COLD_DAYS)
     .sort((a, b) => a.last_activity_at.localeCompare(b.last_activity_at))
     .slice(0, 6);
-  const nextWeek = meetings.filter((m) => new Date(m.starts_at).getTime() < Date.now() + 7 * 86400000).length;
+  const nextWeek = upcomingItems.filter((it) => new Date(it.at).getTime() < Date.now() + 7 * 86400000).length;
   const proposalsInPlay = leads.filter((l) => l.stage === "propuesta" || l.stage === "negociacion").length;
 
   const byStage = STAGES.map((s) => {
@@ -114,16 +123,24 @@ export default function DashboardView({
                 <Link href="/agenda" className="btn ghost sm">Agenda →</Link>
               </div>
               <div className="card-list">
-                {meetings.length === 0 && <div className="empty">No hay reuniones en los próximos 14 días.</div>}
-                {meetings.map((m) => (
-                  <Link key={m.id} href={`/leads/${m.lead_id}?tab=reuniones`} className="list-item">
-                    <span className="when">{date(m.starts_at, { weekday: "short", day: "numeric", month: "short", year: undefined })}<br />{time(m.starts_at)}</span>
-                    <span className="grow ellipsis">
-                      <b style={{ fontWeight: 500 }}>{company[m.lead_id] ?? "—"}</b> <span className="muted">· {m.title}</span>
-                    </span>
-                    <span className="badge">{labelOf(MEETING_KINDS, m.kind)}</span>
-                  </Link>
-                ))}
+                {upcomingItems.length === 0 && <div className="empty">No hay reuniones en los próximos 14 días.</div>}
+                {upcomingItems.map((it) =>
+                  it.m ? (
+                    <Link key={it.m.id} href={`/leads/${it.m.lead_id}?tab=reuniones`} className="list-item">
+                      <span className="when">{date(it.m.starts_at, { weekday: "short", day: "numeric", month: "short", year: undefined })}<br />{time(it.m.starts_at)}</span>
+                      <span className="grow ellipsis">
+                        <b style={{ fontWeight: 500 }}>{company[it.m.lead_id] ?? "—"}</b> <span className="muted">· {it.m.title}</span>
+                      </span>
+                      <span className="badge">{labelOf(MEETING_KINDS, it.m.kind)}</span>
+                    </Link>
+                  ) : (
+                    <a key={it.e!.id} href={it.e!.htmlLink ?? "#"} target="_blank" rel="noreferrer" className="list-item">
+                      <span className="when">{date(it.e!.start, { weekday: "short", day: "numeric", month: "short", year: undefined })}<br />{it.e!.allDay ? "Todo el día" : time(it.e!.start)}</span>
+                      <span className="grow ellipsis muted">{it.e!.title}</span>
+                      <span className="badge"><ICalendar width={11} /> Calendar</span>
+                    </a>
+                  )
+                )}
               </div>
             </section>
 

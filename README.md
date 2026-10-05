@@ -13,9 +13,10 @@ Next.js 16 + Supabase (base de datos, login y archivos) + Netlify + notificacion
 | **Pipeline** | Tablero Kanban (arrastrar entre etapas) y vista de tabla con orden, filtros (responsable, origen, prioridad, etapa), búsqueda y exportar a CSV. |
 | **Ficha del lead** | Datos completos, barra de etapas, próxima acción con fecha, personas de contacto, reuniones (con contador y botón para agendar en Google Calendar), propuestas y presentaciones con versiones y estados, notas fijables, tareas, archivos (subida directa o enlaces de Drive) e historial automático de todo lo que pasa. |
 | **Bloqueo** | Cualquier editor puede bloquear una ficha. Mientras esté bloqueada, solo esa persona y los admins pueden editarla. Lo hace cumplir la base de datos, no solo la pantalla. |
-| **Agenda** | Reuniones de todo el equipo por día y tareas (vencidas y próximas), con filtro "solo lo mío". |
+| **Agenda** | Reuniones del tracker + eventos del Google Calendar de hello@wearekosma.com, por día. Los eventos sin lead se pueden vincular a un lead con un clic (sugiere el lead por el correo de los invitados). Tareas vencidas y próximas, filtro "solo lo mío". |
+| **Google Calendar** | Al registrar una reunión se crea el evento en el Calendar de hello@ con enlace de Google Meet e invitación a los correos del cliente. Editarla actualiza el evento; borrarla lo cancela y avisa a los invitados. |
 | **Equipo** | Lista blanca de correos con acceso y roles (Admin, Editor, Lector). Los admins dan acceso y generan claves temporales. |
-| **Correos** | Desde hello@wearekosma.com al equipo: cuando entra un lead nuevo y cuando un lead pasa a Confirmado. |
+| **Correos** | Desde hello@wearekosma.com al equipo: cuando entra un lead nuevo y cuando un lead pasa a Confirmado. Salen por la cuenta de Google conectada (o por contraseña de aplicación si se configura). |
 | **Extras** | Búsqueda global `⌘K`, atajo `N` para nuevo lead, tema claro/oscuro, tiempo real (si alguien mueve algo, tu pantalla se actualiza sola), responsive. |
 | **Entrada desde la web** | `POST /api/intake` para que el formulario o el agente de wearekosma.com creen leads solos (opcional). |
 
@@ -61,6 +62,8 @@ Next.js 16 + Supabase (base de datos, login y archivos) + Netlify + notificacion
 | `APP_URL` | `https://kosma-tracker.netlify.app` | |
 | `GMAIL_USER` | `hello@wearekosma.com` | |
 | `GMAIL_APP_PASSWORD` | la contraseña de aplicación de 16 letras | **secreta** |
+| `GOOGLE_CLIENT_ID` | de Google Cloud (ver sección Google) | |
+| `GOOGLE_CLIENT_SECRET` | de Google Cloud | **secreta** |
 | `INTAKE_SECRET` | texto largo aleatorio (solo si vas a conectar la web) | **secreta** |
 | `INTAKE_ALLOWED_ORIGINS` | `https://wearekosma.com,https://www.wearekosma.com` | |
 
@@ -71,6 +74,23 @@ Next.js 16 + Supabase (base de datos, login y archivos) + Netlify + notificacion
 1. Entra → crea un lead → debe llegar el correo "Nuevo lead" a los 3.
 2. Muévelo a **Confirmado** → debe llegar el correo "Confirmado".
 3. Bloquéalo y entra con otra cuenta (editor): debe verse en solo lectura.
+
+---
+
+## Conectar Google Calendar + Gmail (hello@wearekosma.com)
+
+1. **Supabase → SQL Editor:** correr `supabase/migrations/0002_google_calendar.sql`.
+2. **Google Cloud** (console.cloud.google.com, entrando con hello@wearekosma.com):
+   - Crear proyecto `KOSMA Tracker`.
+   - **APIs y servicios → Biblioteca:** habilitar **Google Calendar API** y **Gmail API**.
+   - **Google Auth Platform → Branding:** nombre `KOSMA Tracker`, correo de soporte hello@wearekosma.com.
+   - **Audience:** `Internal` si aparece (Google Workspace). Si solo deja `External`, después de crear todo darle **Publish app** (si se queda en "Testing", la conexión se cae cada 7 días).
+   - **Clients → Create client → Web application.** Authorized redirect URI: `https://kosma-tracker.netlify.app/api/google/callback`
+   - Copiar **Client ID** y **Client secret**.
+3. **Netlify → Environment variables:** `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` (esta última marcada como secreta). Redeploy.
+4. **Tracker → Agenda → Conectar Google Calendar**, entrar con hello@wearekosma.com y aceptar. Si sale "Google no verificó esta app": *Configuración avanzada → Ir a KOSMA Tracker* (es tu propia app).
+
+Con eso: la agenda muestra los eventos de hello@, las reuniones nuevas se agendan solas con Meet, y los correos de notificación salen desde hello@ sin contraseña de aplicación.
 
 ---
 

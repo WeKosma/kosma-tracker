@@ -11,6 +11,10 @@ export const STAGES = [
 export type StageId = (typeof STAGES)[number]["id"];
 export const STAGE_IDS = STAGES.map((s) => s.id) as StageId[];
 export const OPEN_STAGES: StageId[] = ["nuevo", "contactado", "discovery", "propuesta", "negociacion"];
+/** Probabilidad de cierre por etapa (para el pipeline ponderado / forecast). */
+export const STAGE_PROB: Record<string, number> = {
+  nuevo: 0.05, contactado: 0.1, discovery: 0.2, propuesta: 0.4, negociacion: 0.65, confirmado: 1, perdido: 0,
+};
 export const stageOf = (id: string) => STAGES.find((s) => s.id === id) ?? STAGES[0];
 
 export const SOURCES = [

@@ -94,6 +94,43 @@ Con eso: la agenda muestra los eventos de hello@, las reuniones nuevas se agenda
 
 ---
 
+## Discord + Pulso semanal
+
+**Supabase → SQL Editor:** correr `supabase/migrations/0003_settings.sql` (una vez).
+
+### 1. Avisos al canal (webhook)
+En Discord: canal (ej. `#pipeline`) → Editar canal → Integraciones → Webhooks → Nuevo webhook → Copiar URL.
+Netlify: `DISCORD_WEBHOOK_URL` = esa URL (**secreta**). Redeploy → tracker → Integraciones → **Enviar prueba**.
+
+### 2. Bot (comandos y "Guardar en KOSMA Tracker")
+1. discord.com/developers/applications → **New Application** → `KOSMA Tracker` (subir el logo).
+2. **General Information:** copiar *Application ID* y *Public Key*.
+3. **Bot:** *Reset Token* → copiar el token. Activar **Message Content Intent**.
+4. **Installation / OAuth2:** scopes `bot` + `applications.commands`; permisos *View Channels, Send Messages, Embed Links, Read Message History, Add Reactions*. Abrir el link e invitar el bot al servidor de KOSMA.
+5. En Discord: Ajustes → Avanzado → **Modo desarrollador**. Clic derecho en el servidor → *Copiar ID del servidor*.
+6. Netlify:
+
+| Variable | Valor | |
+|---|---|---|
+| `DISCORD_APPLICATION_ID` | Application ID | |
+| `DISCORD_PUBLIC_KEY` | Public Key | |
+| `DISCORD_BOT_TOKEN` | token del bot | **secreta** |
+| `DISCORD_GUILD_ID` | ID del servidor | |
+| `DISCORD_LISTEN_CHANNELS` | IDs de canales a escuchar, separados por coma (clic derecho en el canal → Copiar ID) | |
+| `CRON_SECRET` | texto largo aleatorio | **secreta** |
+
+7. Redeploy. En el portal de Discord → General Information → **Interactions Endpoint URL**: `https://<tracker>/api/discord/interactions` → Save (Discord la verifica en ese momento).
+8. Tracker → Integraciones → **Registrar comandos**.
+
+Comandos: `/lead ver`, `/lead nuevo`, `/nota`, `/tarea`, `/pulso`, `/pipeline`. Clic derecho en un mensaje → Apps → **Guardar en KOSMA Tracker**.
+
+### 3. Tareas programadas (Netlify)
+- `netlify/functions/pulso-semanal.mts`: lunes 7:00 (Bogotá) → correo al equipo + Discord.
+- `netlify/functions/discord-escucha.mts`: cada hora lee `DISCORD_LISTEN_CHANNELS`; si un mensaje nombra un lead, lo guarda como nota y reacciona con ✅. La primera vez solo marca el punto de partida (no reprocesa historial).
+Ambas necesitan `CRON_SECRET`. Se ven en Netlify → Logs → Functions.
+
+---
+
 ## Pasar a producción (cuando quieran)
 
 **Opción recomendada: `tracker.wearekosma.com`**

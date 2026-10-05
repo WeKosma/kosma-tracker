@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "@/lib/env";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/api/intake", "/recuperar"];
+const PUBLIC_PATHS = ["/login", "/auth", "/api/intake", "/api/discord", "/api/cron", "/recuperar"];
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });

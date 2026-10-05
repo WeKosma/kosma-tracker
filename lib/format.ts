@@ -14,8 +14,15 @@ export function money(value: number | null | undefined, currency = "COP") {
 }
 
 /** 12.500.000 → "12,5 M" */
+/** "$187 M", "USD 39 mil". Sin Intl compact para que servidor y navegador den lo mismo. */
 export function compactMoney(value: number, currency = "COP") {
-  const n = new Intl.NumberFormat("es-CO", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  const one = (x: number) => {
+    const r = Math.round(x * 10) / 10;
+    const [i, d] = String(Math.abs(r)).split(".");
+    return `${r < 0 ? "-" : ""}${i.replace(/\B(?=(\d{3})+(?!\d))/g, ".")}${d ? `,${d}` : ""}`;
+  };
+  const a = Math.abs(value);
+  const n = a >= 1e6 ? `${one(value / 1e6)} M` : a >= 1e3 ? `${one(value / 1e3)} mil` : one(value);
   return currency === "COP" ? `$${n}` : `${currency} ${n}`;
 }
 

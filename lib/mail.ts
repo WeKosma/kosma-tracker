@@ -3,7 +3,7 @@ import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
 import { canSendWithGmailApi, gmailSend } from "@/lib/google";
 
-function appUrl(fallbackOrigin?: string) {
+export function appUrl(fallbackOrigin?: string) {
   const base = (process.env.APP_URL || fallbackOrigin || "").replace(/\/$/, "");
   return base + (process.env.NEXT_PUBLIC_BASE_PATH || "");
 }
@@ -18,6 +18,15 @@ function transport() {
     secure: true,
     auth: { user, pass },
   });
+}
+
+/** Cabecera de los correos con el logo oficial (PNG servido por el tracker). */
+export function brandHeader(label: string) {
+  const base = appUrl();
+  const logo = base.startsWith("http")
+    ? `<img src="${base}/brand/kosma-logo-white.png" width="120" height="31" alt="KOSMA" style="display:inline-block;vertical-align:middle;border:0;width:120px;height:auto">`
+    : `<span style="font:300 18px/1 Helvetica,Arial,sans-serif;letter-spacing:.32em;color:#f3f3ef">KOSMA</span>`;
+  return `${logo}<span style="display:inline-block;vertical-align:middle;margin-left:14px;font:500 10px/1 Menlo,monospace;letter-spacing:.16em;color:#9b9b96">${label}</span>`;
 }
 
 const esc = (s: unknown) =>
@@ -36,7 +45,7 @@ function layout(opts: { kicker: string; title: string; rows: [string, string][];
   return `<!doctype html><html><body style="margin:0;background:#eeeeea;padding:32px 12px">
   <table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td align="center">
   <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;width:100%;background:#ffffff;border:1px solid #dcdcd6">
-    <tr><td style="padding:22px 28px;background:#050505;font:300 18px/1 Helvetica,Arial,sans-serif;letter-spacing:.32em;color:#f3f3ef">KOSMA <span style="font:500 10px/1 Menlo,monospace;letter-spacing:.16em;color:#9b9b96">&nbsp;TRACKER</span></td></tr>
+    <tr><td style="padding:22px 28px;background:#050505">${brandHeader("TRACKER")}</td></tr>
     <tr><td style="padding:30px 28px 8px">
       <div style="font:500 11px/1 Menlo,Consolas,monospace;letter-spacing:.16em;text-transform:uppercase;color:#7a7a75">${esc(opts.kicker)}</div>
       <div style="margin-top:12px;font:300 26px/1.15 Helvetica,Arial,sans-serif;color:#050505">${esc(opts.title)}</div>
@@ -48,7 +57,7 @@ function layout(opts: { kicker: string; title: string; rows: [string, string][];
   </table></td></tr></table></body></html>`;
 }
 
-async function send(to: string[], subject: string, html: string, text: string) {
+export async function sendMail(to: string[], subject: string, html: string, text: string) {
   if (!to.length) return { sent: false };
   const from = `"KOSMA Tracker" <${process.env.GMAIL_USER || "hello@wearekosma.com"}>`;
   try {
@@ -107,7 +116,7 @@ export async function notifyNewLead(to: string[], lead: LeadLite, by: string, or
     ],
     cta: { label: "Abrir en el tracker", href },
   });
-  return send(to, `Nuevo lead · ${lead.company}`, html, `Nuevo lead: ${lead.company}\nRegistrado por ${by}\n${href}`);
+  return sendMail(to, `Nuevo lead · ${lead.company}`, html, `Nuevo lead: ${lead.company}\nRegistrado por ${by}\n${href}`);
 }
 
 export async function notifyConfirmed(
@@ -131,5 +140,5 @@ export async function notifyConfirmed(
     ],
     cta: { label: "Ver la ficha", href },
   });
-  return send(to, `Confirmado · ${lead.company}`, html, `${lead.company} quedó confirmado por ${by}\n${href}`);
+  return sendMail(to, `Confirmado · ${lead.company}`, html, `${lead.company} quedó confirmado por ${by}\n${href}`);
 }

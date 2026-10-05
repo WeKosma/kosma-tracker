@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types";
 import { profileName } from "@/lib/format";
-import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers } from "./icons";
+import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers, IPulse, IPlug } from "./icons";
 import KosmaLogo from "./KosmaLogo";
 import Intro from "./Intro";
 import { Avatar } from "./ui";
@@ -36,6 +36,7 @@ const NAV = [
   { href: "/", label: "Inicio", icon: IHome },
   { href: "/leads", label: "Pipeline", icon: IBoard },
   { href: "/agenda", label: "Agenda", icon: ICalendar },
+  { href: "/pulso", label: "Pulso", icon: IPulse },
 ];
 
 export default function AppShell({
@@ -153,6 +154,11 @@ export default function AppShell({
             <Link href="/equipo" className={isActive("/equipo") ? "active" : ""}>
               <IUsers /> Equipo
             </Link>
+            {role === "admin" && (
+              <Link href="/integraciones" className={isActive("/integraciones") ? "active" : ""}>
+                <IPlug /> Integraciones
+              </Link>
+            )}
             <Link href="/cuenta" className={isActive("/cuenta") ? "active" : ""}>
               <IUser /> Mi cuenta
             </Link>

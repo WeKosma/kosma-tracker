@@ -1,0 +1,23 @@
+import { redirect } from "next/navigation";
+import { requireSession } from "@/lib/session";
+import { googleStatus } from "@/lib/google";
+import { discordConfig } from "@/lib/discord";
+import { appUrl } from "@/lib/mail";
+import IntegrationsView from "@/components/IntegrationsView";
+
+export const metadata = { title: "Integraciones" };
+
+export default async function IntegracionesPage() {
+  const session = await requireSession();
+  if (session.role !== "admin") redirect("/");
+  const g = await googleStatus().catch(() => ({ configured: false, connected: false, email: null }));
+  const d = discordConfig();
+  return (
+    <IntegrationsView
+      base={appUrl()}
+      google={{ configured: g.configured, connected: g.connected, email: g.email ?? null }}
+      discord={{ webhook: d.webhook, appId: Boolean(d.appId), publicKey: d.publicKey, bot: d.bot, guild: Boolean(d.guild), listen: d.listen.length }}
+      cron={Boolean(process.env.CRON_SECRET)}
+    />
+  );
+}

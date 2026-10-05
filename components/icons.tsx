@@ -62,3 +62,5 @@ export function KosmaMark(p: P) {
     </svg>
   );
 }
+export const IPulse = (p: P) => <svg {...base(p)}><path d="M3 12h4l2.5-6 5 12L17 12h4" /></svg>;
+export const IPlug = (p: P) => <svg {...base(p)}><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0Z" /><path d="M12 16.5V21" /></svg>;

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { notifyNewLead } from "@/lib/mail";
+import { announceNewLead } from "@/lib/discord";
 
 /**
  * Entrada de leads desde la web de KOSMA (formulario o agente).
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
 
   const { data: members } = await supabase.from("members").select("email,role");
   const to = (members ?? []).filter((m) => m.role !== "viewer").map((m) => m.email as string);
-  await notifyNewLead(to, data, "Web de KOSMA", req.nextUrl.origin);
+  await Promise.all([notifyNewLead(to, data, "Web de KOSMA", req.nextUrl.origin), announceNewLead(data, "Web de KOSMA")]);
 
   return NextResponse.json({ ok: true, id: data.id }, { headers });
 }

@@ -6,7 +6,9 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createEvent, deleteEvent, disconnectGoogle, getEvent, googleStatus, updateEvent } from "@/lib/google";
 import { getSession } from "@/lib/session";
-import { notifyConfirmed, notifyNewLead } from "@/lib/mail";
+import { notifyConfirmed, notifyNewLead, sendMail } from "@/lib/mail";
+import { announceMeeting, announceNewLead, announceProposal, announceStage, discordConfig, postToDiscord, registerCommands } from "@/lib/discord";
+import { computePulse, pulseEmail, pulseEmbeds } from "@/lib/pulse";
 import { CURRENCIES, STAGE_IDS } from "@/lib/constants";
 import type { ActionResult, Role } from "@/lib/types";
 import { profileName } from "@/lib/format";
@@ -99,9 +101,13 @@ export async function createLead(input: Record<string, unknown>): Promise<Action
     const { data, error } = await supabase.from("leads").insert(row).select("*").single();
     if (error) throw error;
     const to = await teamEmails(supabase);
-    await notifyNewLead(to, data, profileName(session.profile), await origin());
+    const by = profileName(session.profile);
+    await Promise.all([notifyNewLead(to, data, by, await origin()), announceNewLead(data, by)]);
     if (data.stage === "confirmado") {
-      await notifyConfirmed(to, data, profileName(session.profile), { meetings: 0, proposals: 0 }, await origin());
+      await Promise.all([
+        notifyConfirmed(to, data, by, { meetings: 0, proposals: 0 }, await origin()),
+        announceStage(data, null, "confirmado", by),
+      ]);
     }
     return { id: data.id as string };
   });
@@ -116,6 +122,9 @@ export async function updateLead(id: string, patch: Record<string, unknown>): Pr
     if (error) throw error;
     if (!data?.length) throw new Error("No se pudo guardar: la ficha está bloqueada o no tienes permiso.");
     const lead = data[0];
+    if (row.stage && row.stage !== before?.stage) {
+      await announceStage(lead, before?.stage, row.stage as string, profileName(session.profile));
+    }
     if (row.stage === "confirmado" && before?.stage !== "confirmado") {
       const [{ count: meetings }, { count: proposals }] = await Promise.all([
         supabase.from("meetings").select("id", { count: "exact", head: true }).eq("lead_id", id),
@@ -194,22 +203,35 @@ export type ChildTable = keyof typeof CHILD_FIELDS;
 export async function saveRow(table: ChildTable, input: Record<string, unknown>): Promise<ActionResult<{ id: string }>> {
   return run(async () => {
     if (!(table in CHILD_FIELDS)) throw new Error("Tabla inválida");
-    const { supabase } = await ctx();
+    const { supabase, session } = await ctx();
     const row = pick(input, CHILD_FIELDS[table]);
     for (const k of ["amount", "duration_min", "version", "size_bytes"]) {
       if (k in row) row[k] = row[k] == null || row[k] === "" ? null : Number(row[k]);
     }
     const id = typeof input.id === "string" ? input.id : null;
+    let prevStatus: string | null = null;
+    if (id && table === "proposals") {
+      const { data: prev } = await supabase.from("proposals").select("status").eq("id", id).maybeSingle();
+      prevStatus = (prev?.status as string) ?? null;
+    }
+    let saved: Record<string, unknown>;
     if (id) {
       delete row.lead_id;
-      const { data, error } = await supabase.from(table).update(row).eq("id", id).select("id");
+      const { data, error } = await supabase.from(table).update(row).eq("id", id).select("*");
       if (error) throw error;
       if (!data?.length) throw new Error("No se pudo guardar: la ficha está bloqueada o no tienes permiso.");
-      return { id };
+      saved = data[0];
+    } else {
+      const { data, error } = await supabase.from(table).insert(row).select("*").single();
+      if (error) throw error;
+      saved = data;
     }
-    const { data, error } = await supabase.from(table).insert(row).select("id").single();
-    if (error) throw error;
-    return { id: data.id as string };
+    // Discord: propuestas nuevas o que pasan a "enviada"
+    if (table === "proposals" && (!id || (saved.status === "enviada" && prevStatus !== "enviada"))) {
+      const { data: lead } = await supabase.from("leads").select("id,company").eq("id", saved.lead_id).single();
+      if (lead) await announceProposal(lead as { id: string; company: string }, saved, profileName(session.profile));
+    }
+    return { id: (id ?? saved.id) as string };
   });
 }
 
@@ -349,10 +371,15 @@ export async function saveMeeting(
   cal: CalendarOpts
 ): Promise<ActionResult<{ id: string; gcalError?: string; meetUrl?: string | null }>> {
   return run(async () => {
-    const { supabase } = await ctx();
+    const { supabase, session } = await ctx();
     const row = pick(input, CHILD_FIELDS.meetings);
     if ("duration_min" in row) row.duration_min = row.duration_min == null ? null : Number(row.duration_min);
     const id = typeof input.id === "string" ? input.id : null;
+    const announce = async (meetUrl?: string | null) => {
+      if (id || !meeting.starts_at || new Date(meeting.starts_at as string).getTime() < Date.now()) return;
+      const { data: l } = await supabase.from("leads").select("id,company").eq("id", meeting.lead_id).single();
+      if (l) await announceMeeting(l as { id: string; company: string }, { title: meeting.title as string, starts_at: meeting.starts_at as string, meet_url: meetUrl ?? null }, profileName(session.profile));
+    };
 
     let meeting: Record<string, unknown>;
     if (id) {
@@ -367,11 +394,17 @@ export async function saveMeeting(
       meeting = data;
     }
 
-    if (!cal.sync) return { id: meeting.id as string };
+    if (!cal.sync) {
+      await announce();
+      return { id: meeting.id as string };
+    }
 
     try {
       const status = await googleStatus();
-      if (!status.connected) return { id: meeting.id as string, gcalError: "Google Calendar no está conectado (Agenda → Conectar)." };
+      if (!status.connected) {
+        await announce();
+        return { id: meeting.id as string, gcalError: "Google Calendar no está conectado (Agenda → Conectar)." };
+      }
       const { data: lead } = await supabase.from("leads").select("company").eq("id", meeting.lead_id).single();
       const company = (lead?.company as string) ?? "Cliente";
       const o = await origin();
@@ -381,8 +414,10 @@ export async function saveMeeting(
         ? await updateEvent(meeting.gcal_event_id as string, m, company, { ...cal, appLink })
         : await createEvent(m, company, { ...cal, appLink });
       await supabase.from("meetings").update({ gcal_event_id: res.id, meet_url: res.meetUrl }).eq("id", meeting.id);
+      await announce(res.meetUrl);
       return { id: meeting.id as string, meetUrl: res.meetUrl };
     } catch (e) {
+      await announce();
       return { id: meeting.id as string, gcalError: e instanceof Error ? e.message : String(e) };
     }
   });
@@ -444,5 +479,46 @@ export async function disconnectGoogleAction(): Promise<ActionResult> {
     if (session.role !== "admin") throw new Error("Solo un admin puede desconectar Google.");
     await disconnectGoogle();
     return undefined;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Pulso semanal y Discord
+// ---------------------------------------------------------------------------
+
+/** Envía ya el pulso por correo al equipo y a Discord (solo admins). */
+export async function sendPulseNow(): Promise<ActionResult<{ email: boolean; discord: boolean }>> {
+  return run(async () => {
+    const { supabase, session } = await ctx();
+    if (session.role !== "admin") throw new Error("Solo un admin puede enviar el pulso.");
+    const pulse = await computePulse(supabase);
+    const mail = pulseEmail(pulse);
+    const [m, d] = await Promise.all([
+      sendMail(await teamEmails(supabase), mail.subject, mail.html, mail.text),
+      postToDiscord({ embeds: pulseEmbeds(pulse) }),
+    ]);
+    return { email: m.sent, discord: d.sent };
+  });
+}
+
+/** Mensaje de prueba al canal de Discord. */
+export async function testDiscord(): Promise<ActionResult> {
+  return run(async () => {
+    const { session } = await ctx();
+    if (session.role !== "admin") throw new Error("Solo un admin puede hacer esto.");
+    if (!discordConfig().webhook) throw new Error("Falta DISCORD_WEBHOOK_URL en Netlify.");
+    const r = await postToDiscord({ embeds: [{ author: { name: "KOSMA TRACKER" }, title: "Conexión lista", description: `Desde ahora este canal recibe los avisos del pipeline. Prueba enviada por ${profileName(session.profile)}.`, color: 0xf3f3ef }] });
+    if (!r.sent) throw new Error("Discord no aceptó el mensaje. Revisa que el webhook sea correcto.");
+    return undefined;
+  });
+}
+
+/** Registra los comandos del bot en el servidor de Discord de KOSMA. */
+export async function registerDiscordCommands(): Promise<ActionResult<{ count: number }>> {
+  return run(async () => {
+    const { session } = await ctx();
+    if (session.role !== "admin") throw new Error("Solo un admin puede hacer esto.");
+    const res = await registerCommands();
+    return { count: Array.isArray(res) ? res.length : 0 };
   });
 }

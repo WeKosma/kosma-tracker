@@ -126,23 +126,40 @@ Comandos: `/lead ver`, `/lead nuevo`, `/nota`, `/tarea`, `/pulso`, `/pipeline`. 
 
 ### 3. Tareas programadas (Netlify)
 - `netlify/functions/pulso-semanal.mts`: lunes 7:00 (Bogotá) → correo al equipo + Discord.
+- `netlify/functions/instagram-publicar.mts`: cada 5 minutos → publicaciones de Instagram en proceso y programadas.
 - `netlify/functions/discord-escucha.mts`: cada hora lee `DISCORD_LISTEN_CHANNELS`; si un mensaje nombra un lead, lo guarda como nota y reacciona con ✅. La primera vez solo marca el punto de partida (no reprocesa historial).
-Ambas necesitan `CRON_SECRET`. Se ven en Netlify → Logs → Functions.
+Las tres necesitan `CRON_SECRET`. Se ven en Netlify → Logs → Functions.
 
 ---
 
 ## Contenido · parrillas
 
-1. **Supabase → SQL Editor:** correr `supabase/migrations/0004_contenido.sql`.
+1. **Supabase → SQL Editor:** correr `supabase/migrations/0004_contenido.sql` y después `0005_publicar.sql`.
 2. **Google Cloud** (proyecto KOSMA Tracker) → APIs y servicios → Biblioteca → habilitar **Google Drive API**.
 3. **Tracker → Agenda → Desconectar** Google y **Conectar** de nuevo con hello@wearekosma.com (acepta el nuevo permiso de Drive).
 
 Cómo funciona:
-- Arrastra imágenes o videos a un día del calendario: se crea la publicación con el arte y queda "Para aprobar". Varios archivos a la vez: un carrusel o publicaciones separadas.
-- Cada publicación tiene copy, redes, formato, pilar, responsable, estado, versiones del arte y un hilo de feedback con **Aprobar** / **Pedir cambios** (avisa en Discord).
+- **Subir artes**: escoges qué es (Post, Carrusel, Reel o Historia), el día y los archivos. También se pueden arrastrar a un día del calendario; si son varios, pregunta si es un carrusel o publicaciones separadas.
+- Cada publicación tiene copy, hashtags, redes, formato, responsable, estado, versiones del arte y un hilo de feedback con **Aprobar** / **Pedir cambios**.
+- Carruseles: miniaturas que se reordenan arrastrando, botón + para agregar láminas, flechas, puntos y deslizar con el dedo. Más de un archivo en un post lo vuelve carrusel.
 - Subir una versión nueva guarda la anterior en el historial y vuelve a pedir aprobación.
-- Vistas: Mes, Feed (cómo se verá el perfil) y Lista. Filtros por marca y estado.
-- Archivos de hasta 48 MB se guardan en el tracker y se copian a Drive en `KOSMA · Parrillas de contenido / <Marca> / <Mes>` (carpeta compartida con el equipo). Videos más pesados suben directo a esa carpeta de Drive.
+- Vistas: **Resumen** (tablero del mes: planeadas, publicadas, por aprobar, cambios, tiempo de aprobación, lo que necesita atención, próximos 7 días, ritmo semanal, formatos y redes), Mes, Feed y Lista.
+- Archivos de hasta 48 MB se guardan en el tracker y se copian a Drive en `KOSMA · Parrillas de contenido / KOSMA / <Mes>`. Videos más pesados suben directo a esa carpeta.
+- **Kit para publicar** (cuando está aprobada): copiar copy + hashtags, descargar todos los archivos con nombre ordenado, **Publicar ahora** en Instagram o **Programar** para que salga sola a su fecha y hora.
+
+### Avisos por WhatsApp (CallMeBot, gratis)
+
+Integraciones → Avisos por WhatsApp. Cada persona, una vez: guarda el número del bot que aparece en callmebot.com (sección WhatsApp), le manda `I allow callmebot to send me messages` y pega la apikey que le responde. Se escoge qué le llega a cada uno (arte para aprobar, cambios pedidos, aprobado, comentarios, publicado). A nadie le llega lo que hizo él mismo. Si se suben varias piezas de una vez llega un solo mensaje.
+
+### Publicar en Instagram
+
+Requiere cuenta profesional (Empresa o Creador) y una app de Meta con **API de Instagram con inicio de sesión de Instagram**:
+1. developers.facebook.com → Crear app → caso de uso "Administrar mensajes y contenido en Instagram".
+2. Roles de la app → agregar el Instagram de KOSMA como **Evaluador de Instagram** y aceptar la invitación desde Instagram.
+3. Configuración de la API con inicio de sesión de Instagram → Generar identificadores de acceso → agregar la cuenta → **Generar token**.
+4. Tracker → Integraciones → Instagram → pegar el token → Conectar. Dura 60 días y se renueva solo.
+
+Detalles: Instagram descarga los archivos desde enlaces firmados del tracker. Las imágenes se convierten a JPEG y, en el feed, si la proporción no está entre 4:5 y 1.91:1 se completa con borde negro (queda anotado en el hilo de feedback). Carrusel máx. 10 láminas; máx. 30 hashtags y 2200 caracteres; límite de Instagram: 100 publicaciones al día. La tarea programada `instagram-publicar` (cada 5 min, usa `CRON_SECRET`) termina lo que esté procesando y publica lo programado.
 
 ---
 

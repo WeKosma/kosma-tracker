@@ -240,23 +240,36 @@ export async function registerCommands() {
 // ---------------------------------------------------------------------------
 
 export function announceContent(
-  kind: "revision" | "cambios" | "aprobado",
-  post: { title: string; brand: string; publish_at: string },
+  kind: "revision" | "cambios" | "aprobado" | "publicado",
+  post: { title: string; publish_at: string },
   by: string,
-  extra: { image?: string | null; feedback?: string | null } = {}
+  extra: { image?: string | null; feedback?: string | null; url?: string | null } = {}
 ) {
   const when = new Intl.DateTimeFormat("es-CO", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" }).format(new Date(post.publish_at));
   const base = appUrl();
-  const head = { revision: "ARTE PARA APROBAR", cambios: "CAMBIOS PEDIDOS", aprobado: "APROBADO" }[kind];
+  const head = { revision: "ARTE PARA APROBAR", cambios: "CAMBIOS PEDIDOS", aprobado: "APROBADO", publicado: "PUBLICADO EN INSTAGRAM" }[kind];
   return postToDiscord({
     embeds: [{
-      author: { name: `${head} · ${post.brand.toUpperCase()}` },
+      author: { name: `CONTENIDO · ${head}` },
       title: clip(post.title, 200),
-      url: base.startsWith("http") ? `${base}/contenido` : undefined,
+      url: extra.url ?? (base.startsWith("http") ? `${base}/contenido` : undefined),
       description: kind === "cambios" && extra.feedback ? clip(extra.feedback, 600) : undefined,
-      color: kind === "aprobado" ? COLOR.ok : kind === "cambios" ? COLOR.danger : COLOR.warn,
+      color: kind === "aprobado" || kind === "publicado" ? COLOR.ok : kind === "cambios" ? COLOR.danger : COLOR.warn,
       fields: [{ name: "Publicación", value: when, inline: true }, { name: "Por", value: by, inline: true }],
       image: extra.image ? { url: extra.image } : undefined,
+    }],
+  });
+}
+
+export function announceContentBatch(count: number, by: string, month: string) {
+  const base = appUrl();
+  return postToDiscord({
+    embeds: [{
+      author: { name: "CONTENIDO · ARTES PARA APROBAR" },
+      title: `${count} publicaciones nuevas en la parrilla`,
+      url: base.startsWith("http") ? `${base}/contenido?m=${month}` : undefined,
+      color: COLOR.warn,
+      fields: [{ name: "Subió", value: by, inline: true }],
     }],
   });
 }

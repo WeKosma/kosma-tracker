@@ -6,7 +6,10 @@ import { createClient } from "@/lib/supabase/server";
 import { getSession } from "@/lib/session";
 import { profileName } from "@/lib/format";
 import { CONTENT_STATUS, FORMATS, isVideo, PLATFORMS } from "@/lib/content";
-import { announceContent } from "@/lib/discord";
+import { announceContent, announceContentBatch } from "@/lib/discord";
+import { batchMessage, contentMessage, notifyWhatsApp } from "@/lib/whatsapp";
+import { igStart, igStep, type IgResult } from "@/lib/instagram";
+import { onInstagramPublished } from "@/lib/contentNotify";
 import { copyStorageFileToDrive, createUploadSession, driveName, ensureMonthFolder, ensureRoot, getDriveFile } from "@/lib/drive";
 import { googleStatus } from "@/lib/google";
 import type { ActionResult } from "@/lib/types";
@@ -126,7 +129,12 @@ export type MediaInput = { name: string; mime: string; size: number; path?: stri
  * Registra artes ya subidos. "replace" crea una versión nueva (la anterior queda en el historial).
  * Si la pieza estaba en idea, diseño, cambios o aprobada, pasa a "Para aprobar".
  */
-export async function addMedia(postId: string, items: MediaInput[], mode: "append" | "replace"): Promise<ActionResult<{ ids: string[]; version: number }>> {
+export async function addMedia(
+  postId: string,
+  items: MediaInput[],
+  mode: "append" | "replace",
+  opts: { silent?: boolean } = {}
+): Promise<ActionResult<{ ids: string[]; version: number }>> {
   return run(async () => {
     const { supabase, session } = await ctx();
     if (!items.length) throw new Error("No hay archivos.");
@@ -148,7 +156,13 @@ export async function addMedia(postId: string, items: MediaInput[], mode: "appen
     if (error) throw error;
 
     const by = profileName(session.profile);
-    const needsReview = ["idea", "diseno", "cambios", "aprobado"].includes(post.status as string);
+    const needsReview = ["idea", "diseno", "cambios", "aprobado", "programado"].includes(post.status as string);
+    // Varias láminas en un post = carrusel
+    const total = (mode === "replace" ? 0 : (current ?? []).length) + items.length;
+    const patch: Record<string, unknown> = {};
+    if (total > 1 && post.format === "post") patch.format = "carrusel";
+    if (post.ig_status === "error") Object.assign(patch, { ig_status: null, ig_error: null, ig_containers: null });
+    if (Object.keys(patch).length) await supabase.from("content_posts").update(patch).eq("id", postId);
     const isNewVersion = mode === "replace" && curVersion > 0;
     await supabase.from("content_comments").insert({
       post_id: postId, kind: "system", media_version: version,
@@ -156,9 +170,40 @@ export async function addMedia(postId: string, items: MediaInput[], mode: "appen
     });
     if (needsReview) {
       await supabase.from("content_posts").update({ status: "revision", approved_by: null, approved_at: null }).eq("id", postId);
-      await announceContent("revision", post as { title: string; brand: string; publish_at: string }, by, { image: await signedFirstImage(supabase, postId) });
+      if (post.auto_publish) await supabase.from("content_posts").update({ auto_publish: false }).eq("id", postId);
+      if (!opts.silent) {
+        const p = post as { id: string; title: string; publish_at: string };
+        await Promise.all([
+          announceContent("revision", p, by, { image: await signedFirstImage(supabase, postId) }),
+          notifyWhatsApp("revision", contentMessage("revision", p, by), session.userId),
+        ]);
+      }
     }
     return { ids: (data ?? []).map((d) => d.id as string), version };
+  });
+}
+
+/** Un solo aviso cuando se suben varias publicaciones de una vez (en vez de uno por pieza). */
+export async function announceBatch(postIds: string[]): Promise<ActionResult> {
+  return run(async () => {
+    const { supabase, session } = await ctx();
+    const { data } = await supabase.from("content_posts").select("id,title,publish_at,status").in("id", postIds).order("publish_at");
+    const list = (data ?? []).filter((p) => p.status === "revision");
+    if (!list.length) return undefined;
+    const by = profileName(session.profile);
+    const first = list[0] as { id: string; title: string; publish_at: string };
+    if (list.length === 1) {
+      await Promise.all([
+        announceContent("revision", first, by, { image: await signedFirstImage(supabase, first.id) }),
+        notifyWhatsApp("revision", contentMessage("revision", first, by), session.userId),
+      ]);
+    } else {
+      await Promise.all([
+        announceContentBatch(list.length, by, bogotaDate(first.publish_at).slice(0, 7)),
+        notifyWhatsApp("revision", batchMessage(list.length, first, by), session.userId),
+      ]);
+    }
+    return undefined;
   });
 }
 
@@ -204,12 +249,21 @@ export async function reviewPost(postId: string, kind: "comment" | "approve" | "
     const { error } = await supabase.from("content_comments").insert({ post_id: postId, kind, body: text || null, media_version: version });
     if (error) throw error;
     const by = profileName(session.profile);
+    const p = post as { id: string; title: string; publish_at: string };
     if (kind === "approve") {
       await supabase.from("content_posts").update({ status: "aprobado", approved_by: session.userId, approved_at: new Date().toISOString() }).eq("id", postId);
-      await announceContent("aprobado", post as { title: string; brand: string; publish_at: string }, by, { image: await signedFirstImage(supabase, postId) });
+      await Promise.all([
+        announceContent("aprobado", p, by, { image: await signedFirstImage(supabase, postId) }),
+        notifyWhatsApp("aprobado", contentMessage("aprobado", p, by, { text }), session.userId),
+      ]);
     } else if (kind === "changes") {
       await supabase.from("content_posts").update({ status: "cambios", approved_by: null, approved_at: null }).eq("id", postId);
-      await announceContent("cambios", post as { title: string; brand: string; publish_at: string }, by, { feedback: text });
+      await Promise.all([
+        announceContent("cambios", p, by, { feedback: text }),
+        notifyWhatsApp("cambios", contentMessage("cambios", p, by, { text }), session.userId),
+      ]);
+    } else {
+      await notifyWhatsApp("comentario", contentMessage("comentario", p, by, { text }), session.userId);
     }
     return undefined;
   });
@@ -221,6 +275,84 @@ export async function deleteComment(id: string): Promise<ActionResult> {
     const { data, error } = await supabase.from("content_comments").delete().eq("id", id).eq("author_id", session.userId).select("id");
     if (error) throw error;
     if (!data?.length) throw new Error("Solo puedes borrar tus propios comentarios.");
+    return undefined;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Listo para publicar: descargar, copiar y publicar en Instagram
+// ---------------------------------------------------------------------------
+
+/** Enlaces de descarga (con nombre ordenado) de los artes actuales. */
+export async function downloadLinks(postId: string): Promise<ActionResult<{ name: string; url: string }[]>> {
+  return run(async () => {
+    const supabase = await createClient();
+    if (!(await getSession())) throw new Error("Tu sesión expiró.");
+    const { data: post } = await supabase.from("content_posts").select("title,publish_at").eq("id", postId).single();
+    const { data: media } = await supabase.from("content_media").select("*").eq("post_id", postId).eq("is_current", true).order("position");
+    if (!post || !media?.length) throw new Error("No hay archivos para descargar.");
+    const day = bogotaDate(post.publish_at as string);
+    const out: { name: string; url: string }[] = [];
+    for (const m of media) {
+      const name = driveName({ date: day, title: post.title as string, version: m.version as number, position: media.length > 1 ? (m.position as number) : 0, original: (m.name as string) ?? "archivo" }).replace(/ · v\d+/, "");
+      if (m.path) {
+        const { data } = await supabase.storage.from("tracker").createSignedUrl(m.path as string, 60 * 30, { download: name });
+        if (data) out.push({ name, url: data.signedUrl });
+      } else if (m.drive_file_id) {
+        out.push({ name, url: `https://drive.google.com/uc?export=download&id=${m.drive_file_id}` });
+      } else if (m.url) {
+        out.push({ name, url: m.url as string });
+      }
+    }
+    return out;
+  });
+}
+
+/** Publicar ya en Instagram. Devuelve el estado; el navegador sigue llamando instagramStep hasta terminar. */
+export async function publishInstagram(postId: string): Promise<ActionResult<IgResult>> {
+  return run(async () => {
+    const { supabase, session } = await ctx();
+    const { data: post } = await supabase.from("content_posts").select("status").eq("id", postId).single();
+    if (!post) throw new Error("No encontré la publicación.");
+    if (!["aprobado", "programado", "publicado"].includes(post.status as string)) throw new Error("Primero hay que aprobarla.");
+    return igStart(postId, session.userId, onInstagramPublished);
+  });
+}
+
+export async function instagramStep(postId: string): Promise<ActionResult<IgResult>> {
+  try {
+    if (!(await getSession())) throw new Error("Tu sesión expiró.");
+    const r = await igStep(postId, onInstagramPublished);
+    if (r.state === "publicado" || r.state === "error") revalidatePath("/contenido");
+    return { ok: true, data: r };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** Programar: se publica sola a la fecha y hora de la pieza (revisión cada 5 minutos). */
+export async function scheduleInstagram(postId: string, on: boolean): Promise<ActionResult> {
+  return run(async () => {
+    const { supabase } = await ctx();
+    const { data: post } = await supabase.from("content_posts").select("status,publish_at").eq("id", postId).single();
+    if (!post) throw new Error("No encontré la publicación.");
+    if (on && !["aprobado", "programado"].includes(post.status as string)) throw new Error("Primero hay que aprobarla.");
+    if (on && new Date(post.publish_at as string).getTime() < Date.now() - 60_000) throw new Error("La fecha ya pasó: cámbiala o usa Publicar ahora.");
+    const { error } = await supabase
+      .from("content_posts")
+      .update({ auto_publish: on, status: on ? "programado" : "aprobado", ig_status: null, ig_error: null, ig_containers: null })
+      .eq("id", postId);
+    if (error) throw new Error(/auto_publish|ig_/i.test(error.message) ? "Falta correr el SQL 0005 en Supabase." : error.message);
+    return undefined;
+  });
+}
+
+/** Después de un error: limpia el intento para volver a publicar. */
+export async function resetInstagram(postId: string): Promise<ActionResult> {
+  return run(async () => {
+    const { supabase } = await ctx();
+    const { error } = await supabase.from("content_posts").update({ ig_status: null, ig_error: null, ig_containers: null }).eq("id", postId).eq("ig_status", "error");
+    if (error) throw error;
     return undefined;
   });
 }

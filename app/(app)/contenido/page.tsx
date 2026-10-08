@@ -1,7 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { requireSession } from "@/lib/session";
 import { googleStatus } from "@/lib/google";
-import { bogotaMidnight, isMonth, monthGrid } from "@/lib/calendar";
+import { addDays, bogotaMidnight, isMonth, monthGrid } from "@/lib/calendar";
+import { igStatus } from "@/lib/instagram";
 import { todayISO } from "@/lib/format";
 import type { ContentComment, ContentMedia, ContentPost } from "@/lib/content";
 import ContentView from "@/components/content/ContentView";
@@ -14,21 +15,24 @@ export default async function ContenidoPage({ searchParams }: { searchParams: Pr
   const { m } = await searchParams;
   const month = isMonth(m) ? m : todayISO().slice(0, 7);
   const grid = monthGrid(month);
+  const today = todayISO();
+  // En el mes actual se carga también la semana siguiente (para "Próximos 7 días" del Resumen)
+  const end = today.startsWith(month) && addDays(today, 8) > grid.end ? addDays(today, 8) : grid.end;
 
   const { data: postRows } = await supabase
     .from("content_posts")
     .select("*")
     .gte("publish_at", bogotaMidnight(grid.start))
-    .lt("publish_at", bogotaMidnight(grid.end))
+    .lt("publish_at", bogotaMidnight(end))
     .order("publish_at");
   const posts = (postRows ?? []) as ContentPost[];
   const ids = posts.map((p) => p.id);
 
-  const [{ data: mediaRows }, { data: commentRows }, { data: brandRows }, g] = await Promise.all([
+  const [{ data: mediaRows }, { data: commentRows }, g, ig] = await Promise.all([
     ids.length ? supabase.from("content_media").select("*").in("post_id", ids).order("version").order("position") : Promise.resolve({ data: [] }),
     ids.length ? supabase.from("content_comments").select("*").in("post_id", ids).order("created_at") : Promise.resolve({ data: [] }),
-    supabase.from("content_posts").select("brand,pillar").order("created_at", { ascending: false }).limit(400),
     googleStatus().catch(() => ({ connected: false, drive: false })),
+    igStatus(),
   ]);
 
   // Enlaces temporales (6 h) para ver los archivos privados del bucket
@@ -40,8 +44,6 @@ export default async function ContenidoPage({ searchParams }: { searchParams: Pr
     for (const x of media) if (x.path) x.src = byPath.get(x.path) ?? null;
   }
 
-  const brands = [...new Set(["KOSMA", ...(brandRows ?? []).map((r) => r.brand as string)])];
-  const pillars = [...new Set((brandRows ?? []).map((r) => r.pillar as string).filter(Boolean))];
 
   return (
     <ContentView
@@ -51,8 +53,7 @@ export default async function ContenidoPage({ searchParams }: { searchParams: Pr
       posts={posts}
       media={media}
       comments={(commentRows ?? []) as ContentComment[]}
-      brands={brands}
-      pillars={pillars}
+      ig={{ connected: ig.connected, username: ig.username }}
       drive={{ connected: g.connected, ready: Boolean(g.connected && (g as { drive?: boolean }).drive) }}
       readOnly={session.role === "viewer"}
     />

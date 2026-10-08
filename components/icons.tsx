@@ -67,3 +67,7 @@ export const IPlug = (p: P) => <svg {...base(p)}><path d="M9 3v5M15 3v5M6.5 8h11
 export const IGrid = (p: P) => <svg {...base(p)}><rect x="3.5" y="3.5" width="7" height="7" rx="1" /><rect x="13.5" y="3.5" width="7" height="7" rx="1" /><rect x="3.5" y="13.5" width="7" height="7" rx="1" /><rect x="13.5" y="13.5" width="7" height="7" rx="1" /></svg>;
 export const IStack = (p: P) => <svg {...base(p)} strokeWidth={2.2}><rect x="7" y="7" width="13" height="13" rx="1.5" /><path d="M4 16V5.5A1.5 1.5 0 0 1 5.5 4H16" /></svg>;
 export const IChat = (p: P) => <svg {...base(p)} strokeWidth={2.2}><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5Z" /></svg>;
+export const IInstagram = (p: P) => <svg {...base(p)}><rect x="3.5" y="3.5" width="17" height="17" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.2" cy="6.8" r="0.6" fill="currentColor" /></svg>;
+export const ICopy = (p: P) => <svg {...base(p)}><rect x="8.5" y="8.5" width="12" height="12" rx="1.5" /><path d="M15.5 8.5V5A1.5 1.5 0 0 0 14 3.5H5A1.5 1.5 0 0 0 3.5 5v9A1.5 1.5 0 0 0 5 15.5h3.5" /></svg>;
+export const IWhatsApp = (p: P) => <svg {...base(p)}><path d="M4 20.5 5.2 17A8.5 8.5 0 1 1 8 19.6Z" /><path d="M9 8.5c0 3.5 3 6.5 6.5 6.5l1-1.6-2-1-1 .9a5 5 0 0 1-2.3-2.3l.9-1-1-2Z" strokeWidth={1.3} /></svg>;
+export const ISend = (p: P) => <svg {...base(p)}><path d="M21 3 10 14" /><path d="m21 3-7 18-4-7-7-4Z" /></svg>;

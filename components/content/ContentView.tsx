@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { addMedia, createPost, driveInfo, movePost, syncMediaToDrive } from "@/app/content-actions";
+import { addMedia, announceBatch, createPost, driveInfo, movePost, syncMediaToDrive } from "@/app/content-actions";
 import { CONTENT_STATUS, FORMATS, isVideo, platformOf, statusOf, thumbOf, type ContentComment, type ContentMedia, type ContentPost } from "@/lib/content";
 import { dayKey, shiftMonth } from "@/lib/calendar";
 import { date, todayISO } from "@/lib/format";
@@ -13,6 +13,7 @@ import { useShell } from "../AppShell";
 import { Modal, useUi } from "../ui";
 import { IChat, IChevron, IFolder, IPlus, IStack, IUpload } from "../icons";
 import PostModal from "./PostModal";
+import ContentDashboard from "./ContentDashboard";
 
 const WEEKDAYS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const MAX_TILES = 2;
@@ -26,28 +27,49 @@ type Props = {
   posts: ContentPost[];
   media: ContentMedia[];
   comments: ContentComment[];
-  brands: string[];
-  pillars: string[];
   drive: { connected: boolean; ready: boolean };
+  ig: { connected: boolean; username: string | null };
   readOnly: boolean;
 };
 
 export type Uploading = { id: string; name: string; pct: number; error?: string };
 
-export default function ContentView({ month, days, posts, media, comments, brands, pillars, drive, readOnly }: Props) {
+type View = "resumen" | "mes" | "feed" | "lista";
+const VIEWS: { id: View; label: string }[] = [
+  { id: "resumen", label: "Resumen" },
+  { id: "mes", label: "Mes" },
+  { id: "feed", label: "Feed" },
+  { id: "lista", label: "Lista" },
+];
+const UPLOAD_KINDS = [
+  { id: "post", label: "Post", hint: "Cada archivo es una publicación" },
+  { id: "carrusel", label: "Carrusel", hint: "Todos los archivos son láminas de un mismo carrusel (máx. 10)" },
+  { id: "reel", label: "Reel", hint: "Cada video es un reel" },
+  { id: "historia", label: "Historia", hint: "Todos van como historias de ese día" },
+] as const;
+
+export default function ContentView({ month, days, posts, media, comments, drive, ig, readOnly }: Props) {
   const router = useRouter();
   const { toast } = useUi();
   const { team, nameOf } = useShell();
   const [pending, startTransition] = useTransition();
   const today = todayISO();
-  const [view, setView] = useState<"mes" | "feed" | "lista">("mes");
-  const [brand, setBrand] = useState<string>(() => {
+  const [view, setViewState] = useState<View>("mes");
+  // Recordar la última vista (después de hidratar, para no chocar con el render del servidor)
+  useEffect(() => {
     try {
-      return localStorage.getItem("kosma:brand") ?? "Todas";
-    } catch {
-      return "Todas";
-    }
-  });
+      const v = localStorage.getItem("kosma:content-view") as View | null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (v && v !== "mes" && VIEWS.some((x) => x.id === v)) setViewState(v);
+    } catch {}
+  }, []);
+  const setView = (v: View) => {
+    setViewState(v);
+    try {
+      localStorage.setItem("kosma:content-view", v);
+    } catch {}
+  };
+  const [upKind, setUpKind] = useState<(typeof UPLOAD_KINDS)[number]["id"]>("post");
   const [status, setStatus] = useState<string>("");
   const [openId, setOpenId] = useState<string | null>(null);
   const [overDay, setOverDay] = useState<string | null>(null);
@@ -59,12 +81,6 @@ export default function ContentView({ month, days, posts, media, comments, brand
   const fileInput = useRef<HTMLInputElement>(null);
 
   const go = (m: string | null) => startTransition(() => router.push(m ? `/contenido?m=${m}` : "/contenido", { scroll: false }));
-  const chooseBrand = (b: string) => {
-    setBrand(b);
-    try {
-      localStorage.setItem("kosma:brand", b);
-    } catch {}
-  };
 
   // Abrir una publicación desde el enlace (?p=id)
   useEffect(() => {
@@ -88,7 +104,7 @@ export default function ContentView({ month, days, posts, media, comments, brand
   const current = (id: string) => (mediaByPost.get(id) ?? []).filter((m) => m.is_current).sort((a, b) => a.position - b.position);
   const feedbackCount = (id: string) => comments.filter((c) => c.post_id === id && c.kind !== "system").length;
 
-  const visible = posts.filter((p) => (brand === "Todas" || p.brand === brand) && (!status || p.status === status));
+  const visible = posts.filter((p) => !status || p.status === status);
   const byDay = useMemo(() => {
     const map = new Map<string, ContentPost[]>();
     for (const p of visible) {
@@ -97,13 +113,12 @@ export default function ContentView({ month, days, posts, media, comments, brand
     }
     return map;
   }, [visible]);
-  const inMonth = posts.filter((p) => dayKey(p.publish_at).startsWith(month) && (brand === "Todas" || p.brand === brand));
+  const inMonth = posts.filter((p) => dayKey(p.publish_at).startsWith(month));
   const counts = CONTENT_STATUS.map((s) => ({ ...s, n: inMonth.filter((p) => p.status === s.id).length }));
   const title = date(`${month}-01`, { month: "long", year: "numeric", day: undefined });
-  const defaultBrand = brand === "Todas" ? "KOSMA" : brand;
 
   // ── Subidas ────────────────────────────────────────────────────────────
-  async function uploadInto(post: { id: string }, files: File[], mode: "append" | "replace", version: number, startPos = 0) {
+  async function uploadInto(post: { id: string }, files: File[], mode: "append" | "replace", version: number, startPos = 0, silent = false) {
     const batch = files.map((f, i) => ({ id: `${post.id}-${Date.now()}-${i}`, name: f.name, pct: 0 }));
     setUploads((u) => [...u, ...batch]);
     const set = (id: string, patch: Partial<Uploading>) => setUploads((u) => u.map((x) => (x.id === id ? { ...x, ...patch } : x)));
@@ -117,7 +132,7 @@ export default function ContentView({ month, days, posts, media, comments, brand
       }
     }
     if (done.length) {
-      const r = await addMedia(post.id, done, mode);
+      const r = await addMedia(post.id, done, mode, { silent });
       if (!r.ok) toast(r.error, "error");
       else if (drive.ready) {
         // Copia a Drive en segundo plano (lo que ya subió directo a Drive no se repite)
@@ -133,13 +148,15 @@ export default function ContentView({ month, days, posts, media, comments, brand
     router.refresh();
   }
 
-  async function createWithFiles(day: string, files: File[], grouped: boolean) {
+  async function createWithFiles(day: string, files: File[], grouped: boolean, kind?: string) {
+    if (grouped && kind !== "historia" && files.length > 10) toast("Instagram permite máximo 10 láminas por carrusel: revisa antes de publicar.", "error");
+    files = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
     const groups = grouped ? [files] : files.map((f) => [f]);
+    const created: string[] = [];
     for (const g of groups) {
       const allVideo = g.every((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|webm)$/i.test(f.name));
-      const format = g.length > 1 ? "carrusel" : allVideo ? "reel" : "post";
+      const format = kind === "historia" ? "historia" : g.length > 1 ? "carrusel" : allVideo ? "reel" : kind === "reel" ? "reel" : "post";
       const r = await createPost({
-        brand: defaultBrand,
         title: titleFromFile(g[0].name),
         publish_at: new Date(`${day}T${DEFAULT_TIME}:00-05:00`).toISOString(),
         format,
@@ -149,8 +166,11 @@ export default function ContentView({ month, days, posts, media, comments, brand
         toast(r.error, "error");
         continue;
       }
-      await uploadInto({ id: r.data!.id }, g, "append", 1);
+      await uploadInto({ id: r.data!.id }, g, "append", 1, 0, true);
+      created.push(r.data!.id);
     }
+    // Un solo aviso (Discord + WhatsApp) por tanda de subida
+    if (created.length) announceBatch(created);
     toast(groups.length === 1 ? "Publicación creada en la parrilla" : `${groups.length} publicaciones creadas`);
   }
 
@@ -162,9 +182,15 @@ export default function ContentView({ month, days, posts, media, comments, brand
     else createWithFiles(day, files, false);
   }
 
+  function onPicked(day: string, list: FileList) {
+    const files = [...list].filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/") || /\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(f.name));
+    if (!files.length) return toast("Solo imágenes o videos.", "error");
+    createWithFiles(day, files, upKind === "carrusel" || upKind === "historia", upKind);
+  }
+
   async function newBlank(day: string) {
     if (readOnly) return;
-    const r = await createPost({ brand: defaultBrand, title: "Nueva publicación", publish_at: new Date(`${day}T${DEFAULT_TIME}:00-05:00`).toISOString(), status: "idea" });
+    const r = await createPost({ title: "Nueva publicación", publish_at: new Date(`${day}T${DEFAULT_TIME}:00-05:00`).toISOString(), status: "idea" });
     if (!r.ok) return toast(r.error, "error");
     router.refresh();
     open(r.data!.id);
@@ -248,10 +274,6 @@ export default function ContentView({ month, days, posts, media, comments, brand
             <h1>Contenido</h1>
           </div>
           <div className="row wrap" style={{ gap: 8 }}>
-            <select className="select" style={{ width: "auto" }} value={brand} onChange={(e) => chooseBrand(e.target.value)} aria-label="Marca">
-              <option value="Todas">Todas las marcas</option>
-              {brands.map((b) => <option key={b} value={b}>{b}</option>)}
-            </select>
             <button className="btn" onClick={openDrive} title="Abrir la carpeta de parrillas en el Drive de KOSMA"><IFolder /> Drive</button>
             {!readOnly && (
               <>
@@ -290,11 +312,9 @@ export default function ContentView({ month, days, posts, media, comments, brand
             </div>
             <h2 className="cal-title">{title}</h2>
             <span className="grow" />
-            {!readOnly && <span className="tiny faint hide-sm">Arrastra imágenes o videos a un día para crear la publicación</span>}
+            {!readOnly && view === "mes" && <span className="tiny faint hide-sm">Arrastra imágenes o videos a un día para crear la publicación</span>}
             <div className="seg">
-              <button className={view === "mes" ? "on" : ""} onClick={() => setView("mes")}>Mes</button>
-              <button className={view === "feed" ? "on" : ""} onClick={() => setView("feed")}>Feed</button>
-              <button className={view === "lista" ? "on" : ""} onClick={() => setView("lista")}>Lista</button>
+              {VIEWS.map((v) => <button key={v.id} className={view === v.id ? "on" : ""} onClick={() => setView(v.id)}>{v.label}</button>)}
             </div>
           </div>
 
@@ -308,6 +328,18 @@ export default function ContentView({ month, days, posts, media, comments, brand
                 </div>
               ))}
             </div>
+          )}
+
+          {view === "resumen" && (
+            <ContentDashboard
+              month={month}
+              today={today}
+              posts={posts}
+              current={current}
+              comments={comments}
+              onOpen={open}
+              onFilter={(s) => { setStatus(s); setView("lista"); }}
+            />
           )}
 
           {view === "mes" && (
@@ -373,7 +405,7 @@ export default function ContentView({ month, days, posts, media, comments, brand
                     {th ? (th.video ? <video src={th.src} muted preload="metadata" className="ct-list-thumb" /> : <img src={th.src} alt="" className="ct-list-thumb" loading="lazy" />) : <span className="ct-list-thumb" />}
                     <span className="grow" style={{ minWidth: 0, textAlign: "left" }}>
                       <span className="ellipsis" style={{ display: "block", fontWeight: 500 }}>{p.title}</span>
-                      <span className="tiny faint">{hm(p.publish_at)} · {p.brand} · {p.platforms.map((x) => platformOf(x).short).join(" ")}</span>
+                      <span className="tiny faint">{hm(p.publish_at)} · {FORMATS.find((f) => f.id === p.format)?.label} · {p.platforms.map((x) => platformOf(x).short).join(" ")}</span>
                     </span>
                     <span className="ct-st" style={{ "--st": st.color } as React.CSSProperties}>{st.label}</span>
                   </button>
@@ -417,7 +449,7 @@ export default function ContentView({ month, days, posts, media, comments, brand
                       <tr key={p.id} onClick={() => open(p.id)}>
                         <td className="mono small">{date(p.publish_at, { weekday: "short", day: "numeric", month: "short", year: undefined })} · {hm(p.publish_at)}</td>
                         <td>{th ? (th.video ? <video src={th.src} muted preload="metadata" className="ct-list-thumb" /> : <img src={th.src} alt="" className="ct-list-thumb" loading="lazy" />) : <span className="ct-list-thumb empty" />}</td>
-                        <td><b style={{ fontWeight: 500 }}>{p.title}</b><div className="tiny faint">{p.brand}{p.pillar ? ` · ${p.pillar}` : ""}</div></td>
+                        <td><b style={{ fontWeight: 500 }}>{p.title}</b>{current(p.id).length > 1 && <div className="tiny faint">{current(p.id).length} láminas</div>}</td>
                         <td className="tiny">{p.platforms.map((x) => platformOf(x).short).join(" · ")}</td>
                         <td className="small">{FORMATS.find((f) => f.id === p.format)?.label}</td>
                         <td><span className="ct-st" style={{ "--st": st.color } as React.CSSProperties}>{st.label}</span></td>
@@ -441,7 +473,7 @@ export default function ContentView({ month, days, posts, media, comments, brand
         multiple
         hidden
         onChange={(e) => {
-          if (pickDay && e.target.files?.length) onFilesForDay(pickDay, e.target.files);
+          if (pickDay && e.target.files?.length) onPicked(pickDay, e.target.files);
           setPickDay(null);
           e.target.value = "";
         }}
@@ -455,11 +487,20 @@ export default function ContentView({ month, days, posts, media, comments, brand
           footer={<><button className="btn" onClick={() => setPickDay(null)}>Cancelar</button><button className="btn primary" onClick={() => fileInput.current?.click()}><IUpload /> Escoger archivos</button></>}
         >
           <div className="stack">
+            <div className="field">
+              <span>¿Qué vas a subir?</span>
+              <div className="ct-kinds">
+                {UPLOAD_KINDS.map((k) => (
+                  <button key={k.id} type="button" className={upKind === k.id ? "on" : ""} onClick={() => setUpKind(k.id)}>{k.label}</button>
+                ))}
+              </div>
+              <span className="tiny faint" style={{ textTransform: "none", letterSpacing: 0 }}>{UPLOAD_KINDS.find((k) => k.id === upKind)?.hint}</span>
+            </div>
             <label className="field">
               <span>¿Para qué día?</span>
               <input className="input" type="date" value={pickDay} onChange={(e) => setPickDay(e.target.value)} />
             </label>
-            <p className="tiny muted" style={{ margin: 0 }}>Cada archivo queda como una publicación ese día (o todos juntos como un carrusel). También puedes arrastrarlos directo a un día del calendario.</p>
+            <p className="tiny muted" style={{ margin: 0 }}>También puedes arrastrar los archivos directo a un día del calendario. Puedes escoger varios a la vez.</p>
           </div>
         </Modal>
       )}
@@ -472,11 +513,19 @@ export default function ContentView({ month, days, posts, media, comments, brand
           footer={
             <>
               <button className="btn" onClick={() => { const a = askGroup; setAskGroup(null); createWithFiles(a.day, a.files, false); }}>{askGroup.files.length} publicaciones</button>
-              <button className="btn primary" onClick={() => { const a = askGroup; setAskGroup(null); createWithFiles(a.day, a.files, true); }}>Un carrusel</button>
+              <button className="btn primary" onClick={() => { const a = askGroup; setAskGroup(null); createWithFiles(a.day, a.files, true, "carrusel"); }}><IStack /> Un carrusel</button>
             </>
           }
         >
-          <p className="small muted" style={{ margin: 0 }}>¿Son las láminas de un mismo carrusel o publicaciones separadas?</p>
+          <div className="stack" style={{ gap: 10 }}>
+            <p className="small muted" style={{ margin: 0 }}>¿Son las láminas de un mismo carrusel o publicaciones separadas?</p>
+            <div className="ct-askthumbs">
+              {[...askGroup.files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).slice(0, 12).map((f, i) => (
+                <span key={i} className="ellipsis"><b>{i + 1}</b> {f.name}</span>
+              ))}
+            </div>
+            <p className="tiny faint" style={{ margin: 0 }}>En el carrusel quedan en este orden (por nombre de archivo). Después puedes reordenarlas arrastrando.</p>
+          </div>
         </Modal>
       )}
 
@@ -486,9 +535,8 @@ export default function ContentView({ month, days, posts, media, comments, brand
           post={openPost}
           media={mediaByPost.get(openPost.id) ?? []}
           comments={comments.filter((c) => c.post_id === openPost.id)}
-          brands={brands}
-          pillars={pillars}
           team={team}
+          ig={ig}
           readOnly={readOnly}
           drive={drive}
           uploads={uploads.filter((u) => u.id.startsWith(openPost.id))}

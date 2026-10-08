@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { addMediaLink, deleteComment, deletePost, removeMedia, reorderMedia, reviewPost, syncMediaToDrive, updatePost } from "@/app/content-actions";
 import { CONTENT_STATUS, FORMATS, PLATFORMS, mediaView, statusOf, type ContentComment, type ContentMedia, type ContentPost } from "@/lib/content";
+import PublishKit from "./PublishKit";
 import { bogotaLocalToISO, date, isoToBogotaLocal, profileName, relative } from "@/lib/format";
 import type { Profile } from "@/lib/types";
 import { useShell } from "../AppShell";
@@ -18,11 +19,10 @@ type Props = {
   post: ContentPost;
   media: ContentMedia[];
   comments: ContentComment[];
-  brands: string[];
-  pillars: string[];
   team: Profile[];
   readOnly: boolean;
   drive: { connected: boolean; ready: boolean };
+  ig: { connected: boolean; username: string | null };
   uploads: Uploading[];
   onUpload: (files: File[], mode: "append" | "replace", version: number, startPos: number) => Promise<void>;
   onClose: () => void;
@@ -30,7 +30,7 @@ type Props = {
 
 const KIND_LABEL: Record<string, string> = { approve: "Aprobó", changes: "Pidió cambios", comment: "Comentó", system: "" };
 
-export default function PostModal({ post, media, comments, brands, pillars, team, readOnly, drive, uploads, onUpload, onClose }: Props) {
+export default function PostModal({ post, media, comments, team, readOnly, drive, ig, uploads, onUpload, onClose }: Props) {
   const router = useRouter();
   const { toast, confirm } = useUi();
   const { me, nameOf } = useShell();
@@ -51,10 +51,8 @@ export default function PostModal({ post, media, comments, brands, pillars, team
   const [f, setF] = useState(() => ({
     title: post.title,
     when: isoToBogotaLocal(post.publish_at),
-    brand: post.brand,
     platforms: post.platforms,
     format: post.format,
-    pillar: post.pillar ?? "",
     caption: post.caption ?? "",
     hashtags: post.hashtags ?? "",
     owner_id: post.owner_id ?? "",
@@ -63,8 +61,8 @@ export default function PostModal({ post, media, comments, brands, pillars, team
   }));
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   const dirty =
-    f.title !== post.title || bogotaLocalToISO(f.when) !== new Date(post.publish_at).toISOString() || f.brand !== post.brand ||
-    f.platforms.join() !== post.platforms.join() || f.format !== post.format || f.pillar !== (post.pillar ?? "") ||
+    f.title !== post.title || bogotaLocalToISO(f.when) !== new Date(post.publish_at).toISOString() ||
+    f.platforms.join() !== post.platforms.join() || f.format !== post.format ||
     f.caption !== (post.caption ?? "") || f.hashtags !== (post.hashtags ?? "") || f.owner_id !== (post.owner_id ?? "") ||
     f.status !== post.status || f.published_url !== (post.published_url ?? "");
   const [saving, setSaving] = useState(false);
@@ -76,13 +74,14 @@ export default function PostModal({ post, media, comments, brands, pillars, team
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [dropping, setDropping] = useState(false);
   const appendInput = useRef<HTMLInputElement>(null);
+  const swipe = useRef<number | null>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const st = statusOf(post.status);
 
   async function save() {
     setSaving(true);
     const r = await updatePost(post.id, {
-      title: f.title, publish_at: bogotaLocalToISO(f.when), brand: f.brand, platforms: f.platforms, format: f.format, pillar: f.pillar,
+      title: f.title, publish_at: bogotaLocalToISO(f.when), platforms: f.platforms, format: f.format,
       caption: f.caption, hashtags: f.hashtags, owner_id: f.owner_id || null, status: f.status, published_url: f.published_url,
     });
     setSaving(false);
@@ -184,7 +183,7 @@ export default function PostModal({ post, media, comments, brands, pillars, team
           <div className="row" style={{ gap: 10, minWidth: 0 }}>
             <span className="ct-st" style={{ "--st": st.color } as React.CSSProperties}>{st.label}</span>
             <h2 className="ellipsis">{post.title}</h2>
-            <span className="tiny faint nowrap hide-sm">{post.brand} · {date(post.publish_at, { weekday: "long", day: "numeric", month: "long", year: undefined })}</span>
+            <span className="tiny faint nowrap hide-sm">{date(post.publish_at, { weekday: "long", day: "numeric", month: "long", year: undefined })}</span>
           </div>
           <button className="btn ghost sm icon" onClick={onClose} aria-label="Cerrar"><IX /></button>
         </div>
@@ -193,7 +192,13 @@ export default function PostModal({ post, media, comments, brands, pillars, team
           {/* ───────── Arte ───────── */}
           <div className="cpost-media">
             <div
-              className={`cpost-stage${dropping ? " drop" : ""}`}
+              className={`cpost-stage${dropping ? " drop" : ""}${["historia", "reel", "video"].includes(f.format) ? " tall" : ""}`}
+              onPointerDown={(e) => { swipe.current = e.clientX; }}
+              onPointerUp={(e) => {
+                const dx = swipe.current === null ? 0 : e.clientX - swipe.current;
+                swipe.current = null;
+                if (shown.length > 1 && Math.abs(dx) > 50 && view?.kind === "image") setIdx(dx < 0 ? (at + 1) % shown.length : (at - 1 + shown.length) % shown.length);
+              }}
               onDragOver={(e) => { if (!readOnly && e.dataTransfer.types.includes("Files")) { e.preventDefault(); setDropping(true); } }}
               onDragLeave={() => setDropping(false)}
               onDrop={(e) => { e.preventDefault(); setDropping(false); upload(e.dataTransfer.files, "append"); }}
@@ -216,6 +221,11 @@ export default function PostModal({ post, media, comments, brands, pillars, team
                   <button className="cpost-nav next" onClick={() => setIdx((at + 1) % shown.length)} aria-label="Siguiente"><IChevron /></button>
                   <span className="cpost-count">{at + 1} / {shown.length}</span>
                 </>
+              )}
+              {shown.length > 1 && (
+                <span className="cpost-dots" aria-hidden>
+                  {shown.map((m, i) => <i key={m.id} className={i === at ? "on" : ""} />)}
+                </span>
               )}
               {!isCurrent && <span className="cpost-old">Versión {shownVersion} (anterior)</span>}
               {dropping && <span className="cpost-dropmsg">Soltar para agregar</span>}
@@ -241,13 +251,17 @@ export default function PostModal({ post, media, comments, brands, pillars, team
                     </div>
                   );
                 })}
+                {!readOnly && isCurrent && (
+                  <button className="cpost-th add" onClick={() => appendInput.current?.click()} title="Agregar lámina" aria-label="Agregar lámina"><IPlus /></button>
+                )}
               </div>
             )}
+            {shown.length > 1 && !readOnly && isCurrent && <div className="tiny faint" style={{ marginTop: -4 }}>Carrusel de {shown.length} láminas · arrastra las miniaturas para cambiar el orden</div>}
 
             {active && (
               <div className="cpost-file row wrap">
                 <span className="tiny muted ellipsis grow">{active.name}{active.size_bytes ? ` · ${(active.size_bytes / 1048576).toFixed(1)} MB` : ""}</span>
-                {active.src && <a className="btn ghost sm" href={active.src} download={active.name ?? true} target="_blank" rel="noreferrer">Descargar</a>}
+                {active.src && <a className="btn ghost sm" href={active.src} download={active.name ?? true} target="_blank" rel="noreferrer">Abrir</a>}
                 {active.drive_url ? (
                   <a className="btn ghost sm" href={active.drive_url} target="_blank" rel="noreferrer"><IExternal /> Drive</a>
                 ) : active.path && drive.ready && !readOnly ? (
@@ -270,7 +284,7 @@ export default function PostModal({ post, media, comments, brands, pillars, team
 
             {!readOnly && (
               <div className="row wrap" style={{ gap: 6 }}>
-                <button className="btn sm" onClick={() => appendInput.current?.click()}><IPlus /> Agregar archivos</button>
+                <button className="btn sm" onClick={() => appendInput.current?.click()}><IPlus /> {shown.length ? "Agregar láminas" : "Agregar archivos"}</button>
                 {currentVersion > 0 && <button className="btn sm" onClick={() => replaceInput.current?.click()}><IUpload /> Subir nueva versión</button>}
                 <button className="btn ghost sm" onClick={() => setLinkOpen((x) => !x)}><ILink /> Pegar enlace</button>
               </div>
@@ -302,6 +316,11 @@ export default function PostModal({ post, media, comments, brands, pillars, team
 
           {/* ───────── Datos + feedback ───────── */}
           <div className="cpost-side">
+            {["aprobado", "programado", "publicado"].includes(post.status) ? (
+              <PublishKit post={post} count={media.filter((m) => m.is_current).length} ig={ig} readOnly={readOnly} dirty={dirty} text={[f.caption.trim(), f.hashtags.trim()].filter(Boolean).join("\n\n")} />
+            ) : (
+              post.status !== "idea" && <div className="cpost-kit-hint tiny faint">Cuando se apruebe aparece aquí el kit para publicar: copiar texto, descargar los archivos y publicar en Instagram.</div>
+            )}
             <div className="stack" style={{ gap: 12 }}>
               <label className="field"><span>Título interno</span><input className="input" value={f.title} onChange={(e) => set("title", e.target.value)} disabled={readOnly} /></label>
               <div className="grid g2" style={{ gap: 10 }}>
@@ -311,15 +330,11 @@ export default function PostModal({ post, media, comments, brands, pillars, team
                     {CONTENT_STATUS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
                   </select>
                 </label>
-                <label className="field"><span>Marca</span>
-                  <input className="input" list="ct-brands" value={f.brand} onChange={(e) => set("brand", e.target.value)} disabled={readOnly} />
-                </label>
                 <label className="field"><span>Formato</span>
                   <select className="select" value={f.format} onChange={(e) => set("format", e.target.value)} disabled={readOnly}>
                     {FORMATS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
                   </select>
                 </label>
-                <label className="field"><span>Pilar / tema</span><input className="input" list="ct-pillars" value={f.pillar} onChange={(e) => set("pillar", e.target.value)} placeholder="Autoridad, caso, detrás de cámaras…" disabled={readOnly} /></label>
                 <label className="field"><span>Responsable</span>
                   <select className="select" value={f.owner_id} onChange={(e) => set("owner_id", e.target.value)} disabled={readOnly}>
                     <option value="">Sin asignar</option>
@@ -354,8 +369,6 @@ export default function PostModal({ post, media, comments, brands, pillars, team
                   <button className="btn primary" onClick={save} disabled={saving}>{saving ? "Guardando…" : "Guardar cambios"}</button>
                 </div>
               )}
-              <datalist id="ct-brands">{brands.map((b) => <option key={b} value={b} />)}</datalist>
-              <datalist id="ct-pillars">{pillars.map((b) => <option key={b} value={b} />)}</datalist>
             </div>
 
             {/* Feedback */}

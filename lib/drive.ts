@@ -150,6 +150,16 @@ export async function copyStorageFileToDrive(opts: { path: string; name: string;
   return { id: json.id, url: json.webViewLink ?? `https://drive.google.com/file/d/${json.id}/view` };
 }
 
+/** Descarga el contenido de un archivo de Drive (para publicarlo en Instagram). */
+export async function driveDownload(id: string) {
+  const res = await fetch(`${API}/files/${encodeURIComponent(id)}?alt=media`, {
+    headers: { Authorization: `Bearer ${await token()}` },
+    cache: "no-store",
+  });
+  if (!res.ok || !res.body) throw new Error(`Google Drive: no se pudo leer el archivo (${res.status})`);
+  return res;
+}
+
 export async function getDriveFile(id: string) {
   return driveFetch<{ id: string; name: string; mimeType: string; webViewLink: string; size?: string }>(
     `${API}/files/${encodeURIComponent(id)}?fields=id,name,mimeType,webViewLink,size`

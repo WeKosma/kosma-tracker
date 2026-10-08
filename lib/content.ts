@@ -53,7 +53,35 @@ export type ContentPost = {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // Publicación en Instagram (0005)
+  auto_publish?: boolean;
+  ig_status?: IgStatus | null;
+  ig_media_id?: string | null;
+  ig_error?: string | null;
+  ig_started_at?: string | null;
 };
+
+export type IgStatus = "preparando" | "procesando" | "publicando" | "publicado" | "error";
+
+/** Texto final para publicar: copy + hashtags. */
+export const publishText = (p: Pick<ContentPost, "caption" | "hashtags">) =>
+  [p.caption?.trim(), p.hashtags?.trim()].filter(Boolean).join("\n\n");
+
+/** Qué publica cada formato en Instagram. */
+export const IG_KIND: Record<string, string> = {
+  post: "Post", carrusel: "Carrusel", reel: "Reel", video: "Reel", historia: "Historia", articulo: "Post", otro: "Post",
+};
+
+/** Avisos por WhatsApp: a quién le llega qué. */
+export const WA_EVENTS = [
+  { id: "revision", label: "Arte para aprobar" },
+  { id: "cambios", label: "Cambios pedidos" },
+  { id: "aprobado", label: "Aprobado" },
+  { id: "comentario", label: "Comentarios" },
+  { id: "publicado", label: "Publicado en Instagram" },
+] as const;
+export type WaEvent = (typeof WA_EVENTS)[number]["id"];
+export type WaContact = { name: string; phone: string; apikey: string; events: WaEvent[]; user_id?: string | null };
 
 export type ContentMedia = {
   id: string;

@@ -24,6 +24,7 @@ export type Embed = {
   footer?: { text: string };
   timestamp?: string;
   author?: { name: string };
+  image?: { url: string };
 };
 
 export const discordConfig = () => ({
@@ -46,7 +47,11 @@ export const leadUrl = (id: string) => {
 };
 
 /** Discord rechaza el mensaje entero si un link del embed no es http(s). */
-export const safeEmbed = (e: Embed): Embed => ({ ...e, url: e.url && /^https?:\/\//.test(e.url) ? e.url : undefined });
+export const safeEmbed = (e: Embed): Embed => ({
+  ...e,
+  url: e.url && /^https?:\/\//.test(e.url) ? e.url : undefined,
+  image: e.image && /^https?:\/\//.test(e.image.url) ? e.image : undefined,
+});
 
 /** Publica en el canal del webhook. Nunca lanza: si Discord falla, el tracker sigue. */
 export async function postToDiscord(payload: { content?: string; embeds?: Embed[] }) {
@@ -228,4 +233,30 @@ export async function registerCommands() {
   const { appId, guild } = discordConfig();
   if (!appId || !guild) throw new Error("Faltan DISCORD_APPLICATION_ID o DISCORD_GUILD_ID en Netlify.");
   return discordApi<unknown[]>(`/applications/${appId}/guilds/${guild}/commands`, { method: "PUT", body: JSON.stringify(COMMANDS) });
+}
+
+// ---------------------------------------------------------------------------
+// Parrilla de contenido
+// ---------------------------------------------------------------------------
+
+export function announceContent(
+  kind: "revision" | "cambios" | "aprobado",
+  post: { title: string; brand: string; publish_at: string },
+  by: string,
+  extra: { image?: string | null; feedback?: string | null } = {}
+) {
+  const when = new Intl.DateTimeFormat("es-CO", { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "America/Bogota" }).format(new Date(post.publish_at));
+  const base = appUrl();
+  const head = { revision: "ARTE PARA APROBAR", cambios: "CAMBIOS PEDIDOS", aprobado: "APROBADO" }[kind];
+  return postToDiscord({
+    embeds: [{
+      author: { name: `${head} · ${post.brand.toUpperCase()}` },
+      title: clip(post.title, 200),
+      url: base.startsWith("http") ? `${base}/contenido` : undefined,
+      description: kind === "cambios" && extra.feedback ? clip(extra.feedback, 600) : undefined,
+      color: kind === "aprobado" ? COLOR.ok : kind === "cambios" ? COLOR.danger : COLOR.warn,
+      fields: [{ name: "Publicación", value: when, inline: true }, { name: "Por", value: by, inline: true }],
+      image: extra.image ? { url: extra.image } : undefined,
+    }],
+  });
 }

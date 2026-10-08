@@ -15,6 +15,7 @@ export const GOOGLE_SCOPES = [
   "email",
   "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/gmail.send",
+  "https://www.googleapis.com/auth/drive.file",
 ];
 
 export const googleConfigured = () =>
@@ -106,10 +107,10 @@ export async function exchangeCode(code: string, origin: string, userId: string)
   return info.email as string | undefined;
 }
 
-export async function googleStatus(): Promise<{ configured: boolean; connected: boolean; email?: string | null }> {
+export async function googleStatus(): Promise<{ configured: boolean; connected: boolean; email?: string | null; drive?: boolean }> {
   if (!googleConfigured()) return { configured: false, connected: false };
-  const { data } = await createAdminClient().from("integrations").select("account_email").eq("provider", PROVIDER).maybeSingle();
-  return { configured: true, connected: Boolean(data), email: data?.account_email };
+  const { data } = await createAdminClient().from("integrations").select("account_email,scopes").eq("provider", PROVIDER).maybeSingle();
+  return { configured: true, connected: Boolean(data), email: data?.account_email, drive: String(data?.scopes ?? "").includes("auth/drive") };
 }
 
 export async function disconnectGoogle() {
@@ -122,7 +123,7 @@ export async function disconnectGoogle() {
 }
 
 /** Token de acceso vigente (lo renueva solo si expiró). null si no hay cuenta conectada. */
-async function accessToken(): Promise<string | null> {
+export async function accessToken(): Promise<string | null> {
   if (!googleConfigured()) return null;
   const admin = createAdminClient();
   const { data } = await admin.from("integrations").select("*").eq("provider", PROVIDER).maybeSingle();

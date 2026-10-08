@@ -6,7 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types";
 import { profileName } from "@/lib/format";
-import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers, IPulse, IPlug } from "./icons";
+import { IBoard, ICalendar, IHome, IMenu, IMoon, IPlus, ISearch, ISun, IUser, IUsers, IPulse, IPlug, IGrid } from "./icons";
 import KosmaLogo from "./KosmaLogo";
 import Intro from "./Intro";
 import { Avatar } from "./ui";
@@ -36,6 +36,7 @@ const NAV = [
   { href: "/", label: "Inicio", icon: IHome },
   { href: "/leads", label: "Pipeline", icon: IBoard },
   { href: "/agenda", label: "Agenda", icon: ICalendar },
+  { href: "/contenido", label: "Contenido", icon: IGrid },
   { href: "/pulso", label: "Pulso", icon: IPulse },
 ];
 
@@ -95,6 +96,8 @@ export default function AppShell({
       .channel("kosma-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "leads" }, () => schedule())
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "activity" }, () => schedule())
+      .on("postgres_changes", { event: "*", schema: "public", table: "content_posts" }, () => schedule())
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "content_comments" }, () => schedule())
       .subscribe();
     function schedule() {
       if (refreshTimer.current) clearTimeout(refreshTimer.current);

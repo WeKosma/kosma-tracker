@@ -9,7 +9,7 @@ import { ICalendar, ICheck, IPulse, IX } from "./icons";
 
 type Props = {
   base: string;
-  google: { configured: boolean; connected: boolean; email: string | null };
+  google: { configured: boolean; connected: boolean; email: string | null; drive?: boolean };
   discord: { webhook: boolean; appId: boolean; publicKey: boolean; bot: boolean; guild: boolean; listen: number };
   cron: boolean;
 };
@@ -109,6 +109,7 @@ export default function IntegrationsView({ base, google, discord, cron }: Props)
               <div className="card-body stack">
                 <Check ok={google.configured} label="Llaves de Google" hint="GOOGLE_CLIENT_ID / SECRET" />
                 <Check ok={google.connected} label={google.connected ? `Conectado: ${google.email ?? "cuenta de KOSMA"}` : "Cuenta conectada"} />
+                <Check ok={Boolean(google.drive)} label="Permiso de Drive para las parrillas" hint={google.drive ? undefined : "reconectar en Agenda"} />
                 <div><Link className="btn sm" href="/agenda">Ir a la Agenda</Link></div>
               </div>
             </section>

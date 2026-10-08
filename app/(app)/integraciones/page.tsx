@@ -15,7 +15,7 @@ export default async function IntegracionesPage() {
   return (
     <IntegrationsView
       base={appUrl()}
-      google={{ configured: g.configured, connected: g.connected, email: g.email ?? null }}
+      google={{ configured: g.configured, connected: g.connected, email: g.email ?? null, drive: Boolean((g as { drive?: boolean }).drive) }}
       discord={{ webhook: d.webhook, appId: Boolean(d.appId), publicKey: d.publicKey, bot: d.bot, guild: Boolean(d.guild), listen: d.listen.length }}
       cron={Boolean(process.env.CRON_SECRET)}
     />

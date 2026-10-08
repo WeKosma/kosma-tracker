@@ -64,3 +64,6 @@ export function KosmaMark(p: P) {
 }
 export const IPulse = (p: P) => <svg {...base(p)}><path d="M3 12h4l2.5-6 5 12L17 12h4" /></svg>;
 export const IPlug = (p: P) => <svg {...base(p)}><path d="M9 3v5M15 3v5M6.5 8h11v3a5.5 5.5 0 0 1-11 0Z" /><path d="M12 16.5V21" /></svg>;
+export const IGrid = (p: P) => <svg {...base(p)}><rect x="3.5" y="3.5" width="7" height="7" rx="1" /><rect x="13.5" y="3.5" width="7" height="7" rx="1" /><rect x="3.5" y="13.5" width="7" height="7" rx="1" /><rect x="13.5" y="13.5" width="7" height="7" rx="1" /></svg>;
+export const IStack = (p: P) => <svg {...base(p)} strokeWidth={2.2}><rect x="7" y="7" width="13" height="13" rx="1.5" /><path d="M4 16V5.5A1.5 1.5 0 0 1 5.5 4H16" /></svg>;
+export const IChat = (p: P) => <svg {...base(p)} strokeWidth={2.2}><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 4v-4h0A1.5 1.5 0 0 1 4 14.5Z" /></svg>;

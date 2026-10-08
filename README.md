@@ -131,6 +131,21 @@ Ambas necesitan `CRON_SECRET`. Se ven en Netlify → Logs → Functions.
 
 ---
 
+## Contenido · parrillas
+
+1. **Supabase → SQL Editor:** correr `supabase/migrations/0004_contenido.sql`.
+2. **Google Cloud** (proyecto KOSMA Tracker) → APIs y servicios → Biblioteca → habilitar **Google Drive API**.
+3. **Tracker → Agenda → Desconectar** Google y **Conectar** de nuevo con hello@wearekosma.com (acepta el nuevo permiso de Drive).
+
+Cómo funciona:
+- Arrastra imágenes o videos a un día del calendario: se crea la publicación con el arte y queda "Para aprobar". Varios archivos a la vez: un carrusel o publicaciones separadas.
+- Cada publicación tiene copy, redes, formato, pilar, responsable, estado, versiones del arte y un hilo de feedback con **Aprobar** / **Pedir cambios** (avisa en Discord).
+- Subir una versión nueva guarda la anterior en el historial y vuelve a pedir aprobación.
+- Vistas: Mes, Feed (cómo se verá el perfil) y Lista. Filtros por marca y estado.
+- Archivos de hasta 48 MB se guardan en el tracker y se copian a Drive en `KOSMA · Parrillas de contenido / <Marca> / <Mes>` (carpeta compartida con el equipo). Videos más pesados suben directo a esa carpeta de Drive.
+
+---
+
 ## Pasar a producción (cuando quieran)
 
 **Opción recomendada: `tracker.wearekosma.com`**

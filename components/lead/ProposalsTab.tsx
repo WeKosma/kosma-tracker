@@ -1,5 +1,7 @@
 "use client";
 
+import Linkify from "../Linkify";
+
 import { useState } from "react";
 import { deleteRow, getFileUrl, saveRow } from "@/app/actions";
 import { CURRENCIES, PROPOSAL_KINDS, PROPOSAL_STATUS, labelOf } from "@/lib/constants";
@@ -61,7 +63,11 @@ export default function ProposalsTab({ lead, proposals, editable }: { lead: Lead
             <div className="item-top">
               <div className="grow">
                 <div className="row wrap gap6">
-                  <span className="item-title">{p.title}</span>
+                  {p.url ? (
+                    <a className="item-title link-title" href={p.url} target="_blank" rel="noreferrer" title={p.url}>{p.title} <IExternal width={12} /></a>
+                  ) : (
+                    <span className="item-title">{p.title}</span>
+                  )}
                   <span className="tag">v{p.version}</span>
                   <span className="badge">{labelOf(PROPOSAL_KINDS, p.kind)}</span>
                   <span className={`badge ${statusClass(p.status)}`}>{labelOf(PROPOSAL_STATUS, p.status)}</span>
@@ -71,9 +77,10 @@ export default function ProposalsTab({ lead, proposals, editable }: { lead: Lead
                   {p.sent_at && <span>Enviada {date(p.sent_at)}</span>}
                   <span>Por {nameOf(p.created_by)}</span>
                 </div>
-                {p.notes && <div className="item-body small">{p.notes}</div>}
+                {p.notes && <div className="item-body small pre"><Linkify text={p.notes} /></div>}
                 <div className="row wrap gap6 mt8">
-                  {p.url && <a className="btn sm" href={p.url} target="_blank" rel="noreferrer"><IExternal /> Abrir enlace</a>}
+                  {p.url && <a className="btn sm" href={p.url} target="_blank" rel="noreferrer"><IExternal /> Abrir {hostOf(p.url)}</a>}
+                  {!p.url && !p.file_path && editable && <button className="btn ghost sm" onClick={() => setModal(p)}><IPlus /> Agregar enlace o archivo</button>}
                   {p.file_path && <button className="btn sm" onClick={() => open(p)}><IDownload /> Archivo</button>}
                   {editable && (
                     <select className="select" style={{ width: "auto", minHeight: 28, height: 28, padding: "0 28px 0 8px", fontSize: 12.5 }} value={p.status} onChange={(e) => setStatus(p, e.target.value)} aria-label="Estado">
@@ -156,4 +163,19 @@ function ProposalModal({ lead, proposal, onClose }: { lead: LeadOverview; propos
       </form>
     </Modal>
   );
+}
+
+/** "lemonjoy-kosma.netlify.app" → "lemonjoy-kosma.netlify.app", "docs.google.com/presentation" → "Google Slides" */
+export function hostOf(url: string) {
+  try {
+    const u = new URL(url);
+    if (u.hostname === "docs.google.com") return u.pathname.startsWith("/presentation") ? "Google Slides" : u.pathname.startsWith("/spreadsheets") ? "Google Sheets" : "Google Docs";
+    if (u.hostname === "drive.google.com") return "Drive";
+    if (u.hostname.endsWith("claude.ai")) return "Claude";
+    if (u.hostname.endsWith("figma.com")) return "Figma";
+    if (u.hostname.endsWith("canva.com")) return "Canva";
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return "enlace";
+  }
 }

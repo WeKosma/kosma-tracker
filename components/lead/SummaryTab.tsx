@@ -6,6 +6,7 @@ import { date, todayISO } from "@/lib/format";
 import type { Contact, LeadOverview, Note } from "@/lib/types";
 import { Field, Modal, useUi } from "../ui";
 import { IEdit, IMail, IPhone, IPin, IPlus, ITrash, ILink } from "../icons";
+import Linkify from "../Linkify";
 
 export default function SummaryTab({
   lead, contacts, notes, editable, onEdit,
@@ -59,7 +60,7 @@ export default function SummaryTab({
           {editable && <button className="btn ghost sm" onClick={onEdit}><IEdit /> Editar</button>}
         </div>
         <div className="card-body">
-          {lead.summary ? <div className="pre" style={{ lineHeight: 1.6 }}>{lead.summary}</div> : <div className="faint">Sin contexto todavía. ¿Qué problema operativo tienen y qué esperan de KOSMA?</div>}
+          {lead.summary ? <div className="pre" style={{ lineHeight: 1.6 }}><Linkify text={lead.summary} /></div> : <div className="faint">Sin contexto todavía. ¿Qué problema operativo tienen y qué esperan de KOSMA?</div>}
         </div>
       </section>
 
@@ -67,7 +68,7 @@ export default function SummaryTab({
         <section className="card">
           <div className="card-head"><h3 className="row gap6"><IPin width={13} /> Notas fijadas</h3></div>
           <div>
-            {pinned.map((n) => <div key={n.id} className="item"><div className="pre small">{n.body}</div></div>)}
+            {pinned.map((n) => <div key={n.id} className="item"><div className="pre small"><Linkify text={n.body} /></div></div>)}
           </div>
         </section>
       )}

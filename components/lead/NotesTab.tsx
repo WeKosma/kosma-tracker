@@ -1,5 +1,6 @@
 "use client";
 
+import Linkify from "../Linkify";
 import { useState } from "react";
 import { deleteRow, saveRow } from "@/app/actions";
 import { relative } from "@/lib/format";
@@ -83,7 +84,7 @@ export default function NotesTab({ leadId, notes, editable }: { leadId: string; 
                     </div>
                   </div>
                 ) : (
-                  <div className="item-body" style={{ marginTop: 4 }}>{n.body}</div>
+                  <div className="item-body" style={{ marginTop: 4 }}><Linkify text={n.body} /></div>
                 )}
               </div>
               {editable && editId !== n.id && (

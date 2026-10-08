@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { deleteLead, setLock, updateLead } from "@/app/actions";
-import { PRIORITIES, STAGES, labelOf, sourceLabel, stageOf } from "@/lib/constants";
+import { PRIORITIES, PROPOSAL_STATUS, STAGES, labelOf, sourceLabel, stageOf } from "@/lib/constants";
 import { date, daysSince, money, relative } from "@/lib/format";
 import type { Activity, Contact, FileRow, LeadOverview, Meeting, Note, Proposal, Task } from "@/lib/types";
 import { Topbar, useShell } from "../AppShell";
@@ -13,7 +13,7 @@ import { Avatar, Field, Modal, StageBadge, useUi } from "../ui";
 import { IEdit, IExternal, IFolder, ILock, IMail, IPhone, ITrash, IUnlock } from "../icons";
 import SummaryTab from "./SummaryTab";
 import MeetingsTab, { type CalendarInfo } from "./MeetingsTab";
-import ProposalsTab from "./ProposalsTab";
+import ProposalsTab, { hostOf } from "./ProposalsTab";
 import NotesTab from "./NotesTab";
 import TasksTab from "./TasksTab";
 import FilesTab from "./FilesTab";
@@ -92,6 +92,9 @@ export default function LeadDetail(p: Props) {
     router.replace("/leads");
   }
 
+  const sortedProposals = [...p.proposals].sort((a, b) => (b.sent_at ?? b.created_at).localeCompare(a.sent_at ?? a.created_at));
+  const latestLink = sortedProposals.find((x) => x.url && x.status !== "borrador") ?? sortedProposals.find((x) => x.url);
+
   const counts: Record<Tab, number | null> = {
     resumen: null,
     reuniones: p.meetings.length,
@@ -144,6 +147,11 @@ export default function LeadDetail(p: Props) {
               <span className={`badge ${lead.priority === "alta" ? "solid" : ""}`}>Prioridad {labelOf(PRIORITIES, lead.priority).toLowerCase()}</span>
               {lead.value ? <span className="mono" style={{ color: "var(--fg)" }}>{money(lead.value, lead.currency)}</span> : null}
               <span className="row gap6"><Avatar name={nameOf(lead.owner_id)} size="sm" /> {nameOf(lead.owner_id)}</span>
+              {latestLink && (
+                <a className="btn sm" href={latestLink.url!} target="_blank" rel="noreferrer" title={latestLink.title}>
+                  <IExternal /> Última propuesta
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -186,6 +194,39 @@ export default function LeadDetail(p: Props) {
                 <div className="stat"><div className="kicker">Propuestas</div><div className="v">{lead.proposals_total}</div></div>
                 <div className="stat"><div className="kicker">Días etapa</div><div className="v">{daysSince(lead.stage_changed_at)}</div></div>
               </div>
+            </section>
+
+            <section className="card">
+              <div className="card-head">
+                <h3>Propuestas y presentaciones</h3>
+                <button className="btn ghost sm" onClick={() => changeTab("propuestas")}>Ver todas</button>
+              </div>
+              {sortedProposals.length === 0 ? (
+                <div className="empty" style={{ padding: "18px 16px" }}>Todavía no hay propuestas.</div>
+              ) : (
+                <div className="plinks">
+                  {sortedProposals.map((pr) => {
+                    const inner = (
+                      <>
+                        <span className="grow" style={{ minWidth: 0 }}>
+                          <span className="pl-title ellipsis">{pr.title}</span>
+                          <span className="pl-meta">
+                            {labelOf(PROPOSAL_STATUS, pr.status)}
+                            {pr.amount != null ? ` · ${money(pr.amount, pr.currency)}` : ""}
+                            {pr.url ? ` · ${hostOf(pr.url)}` : pr.file_path ? " · archivo" : " · sin enlace"}
+                          </span>
+                        </span>
+                        {pr.url ? <IExternal width={13} /> : null}
+                      </>
+                    );
+                    return pr.url ? (
+                      <a key={pr.id} className="plink" href={pr.url} target="_blank" rel="noreferrer" title={pr.url}>{inner}</a>
+                    ) : (
+                      <button key={pr.id} type="button" className="plink muted-link" onClick={() => changeTab("propuestas")}>{inner}</button>
+                    );
+                  })}
+                </div>
+              )}
             </section>
 
             <section className="card">
